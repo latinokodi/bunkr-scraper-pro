@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
     /** Tell the main process to start a download */
-    startDownload: (url, outDir) => ipcRenderer.send('start-download', { url, outDir }),
+    startDownload: (url, outDir, maxWorkers) => ipcRenderer.send('start-download', { url, outDir, maxWorkers }),
 
     /** Register a callback for JSON progress events streamed from Python */
     onProgress: (callback) => {

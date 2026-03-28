@@ -62,7 +62,7 @@ app.on('window-all-closed', () => {
 });
 
 // ── IPC: start download ───────────────────────────────────────────────────────
-ipcMain.on('start-download', (event, { url, outDir }) => {
+ipcMain.on('start-download', (event, { url, outDir, maxWorkers }) => {
     if (activeProcess) {
         // Kill any previous run before starting a new one
         activeProcess.kill();
@@ -71,6 +71,7 @@ ipcMain.on('start-download', (event, { url, outDir }) => {
 
     const args = [SCRAPER, url];
     if (outDir) args.push(outDir);
+    if (maxWorkers) args.push('--threads', maxWorkers.toString());
 
     console.log(`[main] Spawning python: ${PYTHON_EXE} ${args.join(' ')}`);
 

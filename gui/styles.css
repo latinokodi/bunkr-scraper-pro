@@ -236,6 +236,49 @@ body {
     cursor: pointer;
 }
 
+/* Concurrency Selector */
+.concurrency-container {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.tiny-label {
+    font-size: 0.6rem;
+    font-weight: 800;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+}
+
+.pill-selector {
+    display: flex;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-dim);
+    border-radius: 12px;
+    padding: 4px;
+    gap: 4px;
+}
+
+.pill-option {
+    padding: 6px 16px;
+    border-radius: 8px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.pill-option:hover {
+    color: white;
+}
+
+.pill-option.active {
+    background: var(--neon-cyan);
+    color: var(--bg-main);
+    box-shadow: 0 0 10px rgba(0, 242, 254, 0.3);
+}
+
 /* Action Button */
 .action-btn-primary {
     height: 48px;

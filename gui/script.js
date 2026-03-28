@@ -10,6 +10,7 @@ const state = {
     isDownloading: false,
     currentFiles: [],
     selectedFolder: null,
+    concurrency: 2,
     stats: {
         total: 0,
         downloaded: 0,
@@ -32,6 +33,7 @@ const elements = {
     failedFiles:        document.getElementById('failedFiles'),
     etaValue:           document.getElementById('etaValue'),
     sysStatus:          document.getElementById('sysStatus'),
+    sysStatusTile:      document.getElementById('sysStatusTile'),
     filesList:          document.getElementById('filesList'),
     messageContainer:   document.getElementById('messageContainer'),
 };
@@ -72,6 +74,7 @@ elements.stopBtn.addEventListener('click', handleStop);
 elements.browseBtn.addEventListener('click', handleBrowse);
 loadPersistentPath();
 
+
 elements.urlInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter' && !state.isDownloading) {
         handleDownload();
@@ -100,6 +103,10 @@ function handleStop() {
         setLoading(false);
         elements.sysStatus.textContent = 'STOPPED BY USER';
         elements.sysStatus.className = 'neon-red';
+        if (elements.sysStatusTile) {
+            elements.sysStatusTile.textContent = 'STOPPED';
+            elements.sysStatusTile.className = 'neon-red';
+        }
         showToast('info', 'Process Canceled', 'The download was stopped manually');
     }
 }
@@ -136,6 +143,10 @@ function handleDownload() {
         setLoading(false);
         elements.sysStatus.textContent = result.success ? 'COMPLETED' : 'STOPPED';
         elements.sysStatus.className = result.success ? 'neon-green' : 'neon-red';
+        if (elements.sysStatusTile) {
+            elements.sysStatusTile.textContent = result.success ? 'COMPLETED' : 'STOPPED';
+            elements.sysStatusTile.className = result.success ? 'neon-green' : 'neon-red';
+        }
 
         if (result.success) {
             showToast('success', 'Operation Complete', `Success: ${state.stats.downloaded} downloads`);
@@ -145,7 +156,7 @@ function handleDownload() {
         }
     });
 
-    window.electronAPI.startDownload(url, state.selectedFolder);
+    window.electronAPI.startDownload(url, state.selectedFolder, state.concurrency);
 }
 
 /** Set Loading UI State */
@@ -156,6 +167,10 @@ function setLoading(loading) {
         elements.stopBtn.classList.remove('hidden');
         elements.sysStatus.textContent = 'SCRAPING...';
         elements.sysStatus.className = 'neon-cyan';
+        if (elements.sysStatusTile) {
+            elements.sysStatusTile.textContent = 'SCRAPING...';
+            elements.sysStatusTile.className = 'neon-cyan';
+        }
     } else {
         elements.downloadBtn.classList.remove('loading');
         elements.downloadBtn.disabled = false;
@@ -167,9 +182,9 @@ function setLoading(loading) {
 function resetDashboard() {
     elements.filesList.innerHTML = '';
     updateCircle(0);
+    elements.etaValue.textContent = '--:--';
     state.stats = { total: 0, downloaded: 0, failed: 0, maintenance: 0 };
     updateStatsDisplay();
-    elements.etaValue.textContent = '--:--';
 }
 
 /** Update Global Progress Circle */
