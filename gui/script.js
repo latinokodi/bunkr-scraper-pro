@@ -64,7 +64,10 @@ function updatePathDisplay(path) {
 }
 
 // Initialize
-elements.downloadBtn.addEventListener('click', handleDownload);
+elements.urlInput.addEventListener('click', () => elements.urlInput.select());
+elements.urlInput.addEventListener('focus', () => elements.urlInput.select());
+
+elements.downloadBtn.addEventListener('click', () => handleDownload());
 elements.stopBtn.addEventListener('click', handleStop);
 elements.browseBtn.addEventListener('click', handleBrowse);
 loadPersistentPath();

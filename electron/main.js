@@ -24,7 +24,7 @@ function createWindow() {
         minHeight:       600,
         backgroundColor: '#0f0f23',
         autoHideMenuBar: true,
-        fullscreen:      true,    // <--- Always open in full screen
+        show:            false,   // Don't show immediately to prevent flash
         icon:            path.join(__dirname, 'assets', 'icon.png'),
         webPreferences: {
             preload:          path.join(__dirname, 'preload.js'),
@@ -36,6 +36,11 @@ function createWindow() {
     });
 
     mainWindow.loadFile(path.join(ROOT, 'gui', 'index.html'));
+
+    mainWindow.once('ready-to-show', () => {
+        mainWindow.maximize();
+        mainWindow.show();
+    });
 
     // Open external links in the system browser
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
