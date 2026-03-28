@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.env
+.pytest_cache/
+
+# Node / Electron
+node_modules/
+dist/
+release/
+.electron-builder-debug
+*.log
+
+# Media / User Data
+downloads/
+temp/
+
+# OS
+.DS_Store
+Thumbs.db

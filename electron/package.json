@@ -1,0 +1,12 @@
+{
+  "name": "bunkr-scraper",
+  "version": "1.0.0",
+  "description": "Download media from Bunkr albums",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^34.5.8"
+  }
+}
