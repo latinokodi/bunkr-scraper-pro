@@ -27,6 +27,12 @@ The album page contains a grid of thumbnails. Each thumbnail is an `<a>` tag poi
 
 **Scraper action:** GET the album page, parse all `href` attributes matching `/f/[a-zA-Z0-9]+`, and deduplicate.
 
+#### 🔄 Recent Improvements: Pagination & JSON Fallback
+1.  **Pagination Crawl**: The scraper now detects `?page=X` links and traverses them automatically to find all files in large albums (>100 files).
+2.  **Dynamic Grid Detection**: If the static HTML doesn't show the grid (common in "Advanced Mode" or during server migrations), the scraper applies a **Regex Fallback**. It searches for file slugs inside JSON blocks or script tags:
+    -   Matches `"/f/([a-zA-Z0-9]+)"` across the entire HTML body.
+    -   Deduplicates results to ensuring an accurate count.
+
 ---
 
 ### Step 2 — File Page → Intermediate Page URL
@@ -40,7 +46,7 @@ Each file detail page contains a **Download** button pointing to the intermediat
    href="https://get.bunkrr.su/file/59120188">Download</a>
 ```
 
-**Scraper action:** GET the file page, find the first `<a>` whose `href` contains `get.bunkrr.su`. That gives the numeric file ID needed for the next step.
+**Scraper action:** GET the file page, find the first `<a>` whose `href` contains `get.bunkrr.su`. This provides the numeric file ID needed for the API call.
 
 ---
 
@@ -48,17 +54,15 @@ Each file detail page contains a **Download** button pointing to the intermediat
 
 **URL pattern:** `https://get.bunkrr.su/file/{numericId}`
 
-This page does **not** embed the real download URL in HTML. Its JavaScript (`src.enc.js`) fires a **POST request** to a private API when the user clicks Download:
+This page fires a **POST request** to a private API when a download is initiated:
 
 ```
 POST https://apidl.bunkr.ru/api/_001_v2
 Content-Type: application/json
-
 {"id": "59120188"}
 ```
 
 API response:
-
 ```json
 {
   "encrypted": true,
@@ -67,33 +71,17 @@ API response:
 }
 ```
 
-#### Decryption Algorithm (reverse-engineered from `src.enc.js`)
-
+#### XOR Decryption Algorithm
 The `url` field is encrypted with a **XOR cipher** using a time-derived key:
-
-```
-key = "SECRET_KEY_" + floor(timestamp / 3600)
-```
-
-Decryption steps:
-
-1. Base64-decode the `url` string → raw bytes
-2. XOR each byte with `key[i % len(key)]`
-3. UTF-8 decode the result → the real CDN URL
+`key = "SECRET_KEY_" + floor(timestamp / 3600)`
 
 **Python implementation:**
-
 ```python
-import base64, math
-
 def decrypt_url(encrypted_b64: str, timestamp: int) -> str:
     key_str   = "SECRET_KEY_" + str(math.floor(timestamp / 3600))
     raw_bytes = base64.b64decode(encrypted_b64)
     key_bytes = key_str.encode("utf-8")
-    decrypted = bytearray(
-        b ^ key_bytes[i % len(key_bytes)]
-        for i, b in enumerate(raw_bytes)
-    )
+    decrypted = bytearray(b ^ key_bytes[i % len(key_bytes)] for i, b in enumerate(raw_bytes))
     return decrypted.decode("utf-8", errors="replace")
 ```
 
@@ -101,23 +89,14 @@ def decrypt_url(encrypted_b64: str, timestamp: int) -> str:
 
 ### Step 4 — Download from CDN URL
 
-The decrypted URL looks like:
+The decrypted URL points to the real file server (e.g., `*.scdn.st/*.mp4`).
 
-```
-https://c4s5.scdn.st/6d0e633f-2d8d-40e8-b018-368bd3bd20de.mp4
-```
-
-**Scraper action:** GET this URL with `Referer: https://get.bunkrr.su/` (required to avoid 403 errors), streaming the response in chunks.
-
-The CDN URL may carry a `?n=originalFilename.mp4` query parameter that the site JS appends. The scraper uses that as the saved filename when present.
+**Scraper action:** Download the file using the header `Referer: https://get.bunkrr.su/`. This is critical; without it, Bunkr servers return a 403 Forbidden error.
 
 ---
 
-## Old vs. Fixed Behaviour
+## ⚖️ License & Usage
 
-| Step | Old | Fixed |
-|------|-----|-------|
-| Album → file page links | ✅ Correct | ✅ Correct |
-| File page → download URL | ❌ Tried to download intermediate page directly | ✅ Extracts link to `get.bunkrr.su` |
-| Intermediate page → CDN | ❌ Not implemented | ✅ POSTs to API, decrypts XOR response |
-| CDN download | ❌ Saved HTML error page (~7 KB) | ✅ Downloads real file with correct `Referer` |
+The project uses the **PolyForm Noncommercial License 1.0.0**.
+- **Attribution**: Credit must be given to **latinokodi**.
+- **Non-Commercial**: The software cannot be used for commercial advantage or monetary compensation.

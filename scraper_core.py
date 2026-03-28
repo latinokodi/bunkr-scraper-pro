@@ -157,9 +157,8 @@ class BunkrScraperCore:
         seen  = set()
         links = []
         
-        # Focus on the main grid container to avoid sidebars/recommendations
-        # Bunkr uses a grid-images class for the main file list
-        grid = soup.find("div", class_=re.compile(r"grid-images|grid-files"))
+        # Method A: Static HTML extraction from the grid
+        grid = soup.find("div", class_=re.compile(r"grid-images|grid-files|grid-root"))
         source = grid if grid else soup
         
         for a in source.find_all("a", href=re.compile(r"/f/[a-zA-Z0-9]+")):
@@ -167,6 +166,22 @@ class BunkrScraperCore:
             if url not in seen:
                 seen.add(url)
                 links.append(url)
+        
+        # Method B: JSON Fallback (for JS-rendered "Advanced Mode" or cached pages)
+        # Bunkr often stores file slugs in a JSON block like const files = [...] or similar
+        if not links:
+            # Look for /f/ slugs in script tags or raw HTML
+            found_slugs = re.findall(r'"/f/([a-zA-Z0-9]+)"', html)
+            if not found_slugs:
+                # Also try matching object property slugs like { slug: "ABC" }
+                found_slugs = re.findall(r'slug:\s*"([a-zA-Z0-9]+)"', html)
+            
+            for slug in found_slugs:
+                url = urljoin(base_url, f"/f/{slug}")
+                if url not in seen:
+                    seen.add(url)
+                    links.append(url)
+                    
         return links
 
     # ── Step 2 ─ File page → get.bunkrr.su URL ───────────────────────────────
@@ -322,11 +337,8 @@ class BunkrScraperCore:
 
         self._emit("status", "Loading album page…")
 
-        # Force "Advanced Mode" to get all files on one page if possible
+        # URL Normalization
         target_url = self.album_url
-        if "advanced=1" not in target_url:
-            separator = "&" if "?" in target_url else "?"
-            target_url = f"{target_url}{separator}advanced=1"
 
         try:
             r = self.session.get(target_url, timeout=30)
@@ -351,33 +363,64 @@ class BunkrScraperCore:
         # Initial extraction
         file_urls = self._get_file_urls(r.text, target_url)
         
-        # Optional: Pagination fallback (if advanced mode doesn't return everything)
-        # Check for ?page=2 etc. if we find pagination links
+        # ── Pagination Traversal ──────────────────────────────────────────────
+        # Standard albums (not 'advanced=1') use ?page=X links
         processed_pages = {target_url}
-        page_links = soup.find_all("a", href=re.compile(r"\?page=\d+"))
-        for p_link in page_links:
-            page_url = urljoin(target_url, p_link["href"])
-            if page_url not in processed_pages:
-                processed_pages.add(page_url)
-                print(f"  Found additional page: {page_url}")
+        discovery_queue = [target_url]
+        
+        # Limit to 50 pages to prevent infinite loops if Bunkr malfunctions
+        max_pages = 50 
+        page_count = 0
+        
+        while discovery_queue and page_count < max_pages:
+            page_count += 1
+            current_p_url = discovery_queue.pop(0)
+            
+            # Re-parse if it's not the first page (which we already have in 'soup')
+            current_soup = soup if page_count == 1 else None
+            if not current_soup:
                 try:
-                    pr = self.session.get(page_url, timeout=20)
+                    pr = self.session.get(current_p_url, timeout=20)
                     if pr.status_code == 200:
-                        file_urls.extend(self._get_file_urls(pr.text, page_url))
+                        current_soup = BeautifulSoup(pr.text, "html.parser")
+                        new_links = self._get_file_urls(pr.text, current_p_url)
+                        file_urls.extend([l for l in new_links if l not in file_urls])
+                except:
+                    continue
+
+            if current_soup:
+                # Find links that look like pagination
+                # Bunkr uses /a/[id]?page=X or similar
+                p_links = current_soup.find_all("a", href=re.compile(r"\?page=\d+"))
+                for p_link in p_links:
+                    p_url = urljoin(current_p_url, p_link["href"])
+                    if p_url not in processed_pages:
+                        processed_pages.add(p_url)
+                        discovery_queue.append(p_url)
+                        print(f"  Found extra page: {p_url.split('?')[-1]}")
+
+        if not file_urls:
+            # Final desperate attempt: if still 0 files, try advanced mode
+            if "advanced=1" not in target_url:
+                adv_url = f"{target_url}{'&' if '?' in target_url else '?'}advanced=1"
+                print("  Trying Advanced Mode fallback...")
+                try:
+                    ar = self.session.get(adv_url, timeout=25)
+                    file_urls = self._get_file_urls(ar.text, adv_url)
                 except:
                     pass
 
         if not file_urls:
-            msg = "No files found in album."
+            msg = "No files found in album (check if it's private or empty)."
             print(f"!  {msg}")
             self._emit("status", msg)
             return {"success": False, "error": msg,
                     "total": 0, "downloaded": 0, "failed": 0, "skipped": 0}
 
-        # Final deduplication
+        # Final cleanup
         file_urls = list(dict.fromkeys(file_urls))
         total = len(file_urls)
-        print(f"  Found {total} file(s)\n")
+        print(f"  Found {total} total file(s)\n")
         self._emit("found_files", f"Found {total} files", total=total)
 
         # ── Overall progress bar ──────────────────────────────────────────────
