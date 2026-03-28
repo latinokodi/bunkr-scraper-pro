@@ -61,14 +61,61 @@ app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
 });
 
-// ── IPC: start download ───────────────────────────────────────────────────────
-ipcMain.on('start-download', (event, { url, outDir, maxWorkers }) => {
-    if (activeProcess) {
-        // Kill any previous run before starting a new one
-        activeProcess.kill();
-        activeProcess = null;
-    }
 
+
+// ── Queue Management ─────────────────────────────────────────────────────────
+const QUEUE_FILE = path.join(app.getPath('userData'), 'bunkr_queue.json');
+let downloadQueue = [];
+
+function loadQueue() {
+    try {
+        if (fs.existsSync(QUEUE_FILE)) {
+            const data = fs.readFileSync(QUEUE_FILE, 'utf8');
+            if (data.trim() !== '') downloadQueue = JSON.parse(data);
+        }
+    } catch(err) { console.error('[main] Error loading queue', err); }
+}
+
+function saveQueue() {
+    try { fs.writeFileSync(QUEUE_FILE, JSON.stringify(downloadQueue, null, 2)); }
+    catch(err) { console.error('[main] Error saving queue', err); }
+}
+
+function processQueue() {
+    if (activeProcess || downloadQueue.length === 0) return;
+    const task = downloadQueue[0];
+    startPythonScraper(task);
+}
+
+loadQueue();
+
+ipcMain.handle('get-queue', () => downloadQueue);
+
+ipcMain.on('add-to-queue', (event, task) => {
+    // Add a unique ID if it doesn't have one
+    task.id = task.id || Date.now().toString() + Math.random().toString(36).substr(2, 5);
+    downloadQueue.push(task);
+    saveQueue();
+    if (mainWindow) mainWindow.webContents.send('queue-updated', downloadQueue);
+    processQueue();
+});
+
+ipcMain.on('remove-from-queue', (event, id) => {
+    downloadQueue = downloadQueue.filter(t => t.id !== id);
+    saveQueue();
+    if (mainWindow) mainWindow.webContents.send('queue-updated', downloadQueue);
+});
+
+ipcMain.on('skip-file', (event, filename) => {
+    if (activeProcess && activeProcess.stdin) {
+        console.log(`[main] Passing skip request for: ${filename}`);
+        const payload = JSON.stringify({ action: "skip", filename: filename });
+        activeProcess.stdin.write(payload + "\n");
+    }
+});
+
+// ── Python Process Management ──────────────────────────────────────────────────
+function startPythonScraper({ url, outDir, maxWorkers, id }) {
     const args = [SCRAPER, url];
     if (outDir) args.push(outDir);
     if (maxWorkers) args.push('--threads', maxWorkers.toString());
@@ -81,6 +128,11 @@ ipcMain.on('start-download', (event, { url, outDir, maxWorkers }) => {
     });
 
     activeProcess = child;
+
+    // Immediately notify UI that the process has launched (avoids stale empty screens)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('download-started', { url, outDir, maxWorkers, id });
+    }
 
     let buffer = '';
 
@@ -111,7 +163,7 @@ ipcMain.on('start-download', (event, { url, outDir, maxWorkers }) => {
         console.error('[python stderr]', data.toString());
     });
 
-    // ── process exit → send final result ─────────────────────────────────────
+    // ── process exit → queue advancement ─────────────────────────────────────
     child.on('close', (code) => {
         console.log(`[main] Python exited with code ${code}`);
         activeProcess = null;
@@ -120,6 +172,16 @@ ipcMain.on('start-download', (event, { url, outDir, maxWorkers }) => {
             success:  code === 0,
             exitCode: code,
         });
+
+        // Advance Queue
+        if (downloadQueue.length > 0 && downloadQueue[0].id === id) {
+            downloadQueue.shift();
+            saveQueue();
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('queue-updated', downloadQueue);
+            }
+        }
+        processQueue();
     });
 
     child.on('error', (err) => {
@@ -131,8 +193,18 @@ ipcMain.on('start-download', (event, { url, outDir, maxWorkers }) => {
             exitCode: -1,
             error:    err.message,
         });
+
+        // Advance Queue on catastrophic failure
+        if (downloadQueue.length > 0 && downloadQueue[0].id === id) {
+            downloadQueue.shift();
+            saveQueue();
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('queue-updated', downloadQueue);
+            }
+        }
+        processQueue();
     });
-});
+}
 
 // ── IPC: open downloads folder ────────────────────────────────────────────────
 ipcMain.on('open-downloads', (_event, dir) => {
@@ -147,6 +219,8 @@ ipcMain.on('stop-download', () => {
         activeProcess.kill();
         activeProcess = null;
     }
+    // Note: stopping the active process effectively aborts the current task, 
+    // the 'close' handler will then advance the queue to the next item automatically.
 });
 
 // ── IPC: select folder ────────────────────────────────────────────────────────

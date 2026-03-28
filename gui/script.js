@@ -10,7 +10,7 @@ const state = {
     isDownloading: false,
     currentFiles: [],
     selectedFolder: null,
-    concurrency: 2,
+    concurrency: 3,
     stats: {
         total: 0,
         downloaded: 0,
@@ -36,7 +36,85 @@ const elements = {
     sysStatusTile:      document.getElementById('sysStatusTile'),
     filesList:          document.getElementById('filesList'),
     messageContainer:   document.getElementById('messageContainer'),
+    queueSection:       document.getElementById('queueSection'),
+    queueList:          document.getElementById('queueList'),
+    currentAlbumTitle:  document.getElementById('currentAlbumTitle'),
 };
+
+// Queue Sync Init
+window.addEventListener('DOMContentLoaded', async () => {
+    const q = await window.electronAPI.getQueue();
+    renderQueue(q);
+});
+
+window.electronAPI.onQueueUpdated((q) => {
+    renderQueue(q);
+});
+
+function renderQueue(q) {
+    if (!q || q.length <= 1) {
+        elements.queueSection.style.display = 'none';
+        return;
+    }
+    elements.queueSection.style.display = 'block';
+    
+    // We only show items from index 1+ since index 0 is currently processing
+    const waiting = q.slice(1);
+    if (waiting.length === 0) {
+        elements.queueSection.style.display = 'none';
+        return;
+    }
+
+    elements.queueList.innerHTML = waiting.map(task => `
+        <div class="queue-item">
+            <span class="queue-url" title="${task.url}">${task.url}</span>
+            <div class="queue-actions">
+                <button onclick="window.electronAPI.removeFromQueue('${task.id}')" title="Remove from Queue">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function skipFile(filename) {
+    window.electronAPI.skipFile(filename);
+}
+
+function retryFile(url, filename) {
+    if (!url) {
+        showToast('error', 'Retry Failed', 'No source URL found for this file');
+        return;
+    }
+    window.electronAPI.addToQueue(url, state.selectedFolder, state.concurrency);
+    showToast('success', 'File Re-Queued', filename);
+    
+    // UI Feedback: Reset the row to "Retrying" state
+    const row = document.querySelector(`[data-filename="${filename}"]`);
+    if (row) {
+        row.querySelector('.retry-btn')?.remove();
+        const badge = row.querySelector('.status-badge');
+        badge.className = 'status-badge downloading';
+        badge.innerHTML = `${icons.downloading} Retrying`;
+        
+        // Re-inject progress container if it was removed
+        if (!row.querySelector('.row-progress-container')) {
+            const progress = document.createElement('div');
+            progress.className = 'col-progress row-progress-container';
+            progress.innerHTML = `
+                <div class="row-progress-info">
+                    <span class="pct">0%</span>
+                    <span class="eta">...</span>
+                </div>
+                <div class="row-progress-bar">
+                    <div class="row-progress-fill" style="width: 0%"></div>
+                </div>
+            `;
+            // Insert after badge
+            row.insertBefore(progress, badge.nextSibling);
+        }
+    }
+}
 
 // SVG Icons for statuses
 const icons = {
@@ -76,8 +154,44 @@ loadPersistentPath();
 
 
 elements.urlInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter' && !state.isDownloading) {
+    if (e.key === 'Enter') {
         handleDownload();
+    }
+});
+
+// Setup progress listener
+window.electronAPI.onDownloadStarted((task) => {
+    state.isDownloading = true;
+    setLoading(true);
+    resetDashboard();
+    elements.currentAlbumTitle.textContent = "Connecting to Bunkr...";
+});
+
+window.electronAPI.onProgress((data) => {
+    window.onPythonProgress(data);
+});
+
+window.electronAPI.onResult((result) => {
+    if (!state.isDownloading) return; // Ignore if stopped by user
+
+    state.isDownloading = false;
+    setLoading(false);
+    elements.sysStatus.textContent = result.success ? 'COMPLETED' : 'STOPPED';
+    elements.sysStatus.className = result.success ? 'neon-green' : 'neon-red';
+    if (elements.sysStatusTile) {
+        elements.sysStatusTile.textContent = result.success ? 'COMPLETED' : 'STOPPED';
+        elements.sysStatusTile.className = result.success ? 'neon-green' : 'neon-red';
+    }
+
+    if (result.success) {
+        showToast('success', 'Album Complete', `Saved to your output folder`);
+        updateCircle(100);
+        elements.currentAlbumTitle.textContent = "Waiting for next album...";
+    } else if (result.exitCode === -1) {
+        showToast('error', 'Execution Error', 'Python Engine failed to start globally. Retrying automatically..');
+    } else {
+        showToast('error', 'Process Error', result.error || 'The scraper exited unexpectedly');
+        elements.currentAlbumTitle.textContent = "Error during download";
     }
 });
 
@@ -125,38 +239,11 @@ function handleDownload() {
         return;
     }
 
-    state.isDownloading = true;
-    setLoading(true);
-    resetDashboard();
-
-    // Prepare IPC
-    window.electronAPI.removeAllListeners();
-
-    window.electronAPI.onProgress((data) => {
-        window.onPythonProgress(data);
-    });
-
-    window.electronAPI.onResult((result) => {
-        if (!state.isDownloading) return; // Ignore if stopped by user
-
-        state.isDownloading = false;
-        setLoading(false);
-        elements.sysStatus.textContent = result.success ? 'COMPLETED' : 'STOPPED';
-        elements.sysStatus.className = result.success ? 'neon-green' : 'neon-red';
-        if (elements.sysStatusTile) {
-            elements.sysStatusTile.textContent = result.success ? 'COMPLETED' : 'STOPPED';
-            elements.sysStatusTile.className = result.success ? 'neon-green' : 'neon-red';
-        }
-
-        if (result.success) {
-            showToast('success', 'Operation Complete', `Success: ${state.stats.downloaded} downloads`);
-            updateCircle(100);
-        } else {
-            showToast('error', 'Process Error', result.error || 'The scraper exited unexpectedly');
-        }
-    });
-
-    window.electronAPI.startDownload(url, state.selectedFolder, state.concurrency);
+    // Pass directly to the Electron Persistent Queue
+    window.electronAPI.addToQueue(url, state.selectedFolder, state.concurrency);
+    
+    showToast('success', 'Added to Queue', url);
+    elements.urlInput.value = ''; // Clean input
 }
 
 /** Set Loading UI State */
@@ -205,13 +292,25 @@ function updateStatsDisplay() {
 
 /** Handle Incoming Python Progress Events */
 window.onPythonProgress = function (data) {
+    if (data.type === 'album_info') {
+        const title = data.name || "Unknown Album";
+        elements.currentAlbumTitle.textContent = `Downloading: ${title}`;
+        
+        // Wipe dashboard cleanly for the new process
+        if (!state.isDownloading) {
+            state.isDownloading = true;
+            setLoading(true);
+        }
+        resetDashboard();
+    }
+
     if (data.type === 'found_files') {
         state.stats.total = data.total;
         updateStatsDisplay();
     }
 
     if (data.type === 'file_start') {
-        addTableRow(data.filename);
+        addTableRow(data.filename, data.fileurl);
     }
 
     if (data.type === 'file_progress') {
@@ -221,7 +320,7 @@ window.onPythonProgress = function (data) {
     if (data.type === 'file_complete') {
         state.stats.downloaded++;
         updateStatsDisplay();
-        updateTableRowStatus(data.filename, 'success');
+        updateTableRowStatus(data.filename, 'success', data.fileurl);
         
         const totalDone = state.stats.downloaded + state.stats.failed;
         const total = state.stats.total > 0 ? state.stats.total : 1;
@@ -234,19 +333,21 @@ window.onPythonProgress = function (data) {
 
     if (data.type === 'file_error') {
         state.stats.failed++;
-        const status = data.reason === 'maintenance' ? 'maintenance' : 'error';
+        const status = data.reason === 'maintenance' ? 'maintenance' : (data.reason === 'skipped' ? 'skipped' : 'error');
         
         // Ensure row exists
         const existing = document.querySelector(`[data-filename="${data.filename}"]`);
-        if (!existing) addTableRow(data.filename);
+        if (!existing && data.filename) addTableRow(data.filename, data.fileurl);
         
-        updateTableRowStatus(data.filename, status);
+        if (data.filename) {
+            updateTableRowStatus(data.filename, status, data.fileurl);
+        }
         updateStatsDisplay();
     }
 };
 
 /** Create Table Row */
-function addTableRow(filename) {
+function addTableRow(filename, fileurl = '') {
     // Remove empty state if present
     const empty = elements.filesList.querySelector('.empty-state');
     if (empty) empty.remove();
@@ -254,6 +355,7 @@ function addTableRow(filename) {
     const row = document.createElement('div');
     row.className = 'table-row';
     row.dataset.filename = filename;
+    row.dataset.fileurl = fileurl;
     row.innerHTML = `
         <div class="col-name file-name-cell" title="${filename}">${filename}</div>
         <div class="col-status">
@@ -268,6 +370,9 @@ function addTableRow(filename) {
                 <div class="row-progress-fill" style="width: 0%"></div>
             </div>
         </div>
+        <button class="skip-btn" title="Skip File" onclick="skipFile('${filename}')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
+        </button>
     `;
     elements.filesList.prepend(row);
 }
@@ -287,25 +392,56 @@ function updateTableRowProgress(filename, percent, eta) {
 }
 
 /** Update Table Row Status */
-function updateTableRowStatus(filename, status) {
+function updateTableRowStatus(filename, status, fileurl = '') {
     const row = document.querySelector(`[data-filename="${filename}"]`);
     if (!row) return;
 
+    // Update fileurl if provided
+    if (fileurl) row.dataset.fileurl = fileurl;
+
     const badge = row.querySelector('.status-badge');
-    const label = status === 'success' ? 'Finished' : (status === 'maintenance' ? 'Maint.' : 'Failed');
-    
-    badge.className = `status-badge ${status}`;
-    badge.innerHTML = `${icons[status]} ${label}`;
+    switch (status) {
+        case 'success':
+            badge.className = 'status-badge success';
+            badge.innerHTML = `${icons.success} Finished`;
+            break;
+        case 'error':
+            badge.className = 'status-badge error';
+            badge.innerHTML = `${icons.error} Failed`;
+            break;
+        case 'maintenance':
+            badge.className = 'status-badge maintenance';
+            badge.innerHTML = `${icons.maintenance} Maint.`;
+            break;
+        case 'skipped':
+            badge.className = 'status-badge skipped';
+            badge.innerHTML = `Skipped`;
+            break;
+    }
 
     if (status !== 'downloading') {
         const info = row.querySelector('.row-progress-info');
-        if (info) info.innerHTML = `<span class="pct">${status === 'success' ? '100%' : 'ERROR'}</span>`;
-        if (status === 'success') {
-            const fill = row.querySelector('.row-progress-fill');
-            if (fill) fill.style.width = '100%';
+        if (info) info.remove();
+        
+        // Remove skip button and potentially add retry button
+        const skipBtn = row.querySelector('.skip-btn');
+        if (skipBtn) skipBtn.remove();
+
+        const retryUrl = row.dataset.fileurl;
+        if ((status === 'error' || status === 'skipped') && retryUrl) {
+            const retryBtn = document.createElement('button');
+            retryBtn.className = 'retry-btn';
+            retryBtn.title = 'Retry File';
+            retryBtn.innerHTML = `
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+            `;
+            retryBtn.onclick = () => retryFile(retryUrl, filename);
+            row.appendChild(retryBtn);
         }
     }
 }
+
+
 
 /** Format Seconds */
 function formatSecs(s) {

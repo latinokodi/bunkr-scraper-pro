@@ -15,6 +15,7 @@ import re
 import time
 import json
 import math
+import sys
 import base64
 import requests
 import threading
@@ -116,18 +117,29 @@ class BunkrScraperCore:
         self.progress_callback = progress_callback
         self.max_workers       = max_workers
         self._print_lock       = threading.Lock()
+        
+        self.cancel_flags      = {}
+        if self.progress_callback:
+            self._stdin_thread = threading.Thread(target=self._stdin_listener, daemon=True)
+            self._stdin_thread.start()
 
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                               "AppleWebKit/537.36 (KHTML, like Gecko) "
-                               "Chrome/120.0.0.0 Safari/537.36",
-            "Accept":          "text/html,application/xhtml+xml,application/xml;"
-                               "q=0.9,image/webp,*/*;q=0.8",
+            "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
             "Referer":         "https://bunkr.cr/",
         })
 
+    def _stdin_listener(self):
+        """Asynchronously listens to stdin for Skip/Cancel injects from Electron."""
+        for line in sys.stdin:
+            try:
+                data = json.loads(line)
+                if data.get("action") == "skip" and "filename" in data:
+                    self.cancel_flags[data["filename"]] = True
+            except:
+                pass
     # ── Progress helpers ──────────────────────────────────────────────────────
 
     def _safe_print(self, *args, **kwargs):
@@ -265,16 +277,17 @@ class BunkrScraperCore:
 
     # ── Step 4 ─ Download from CDN ────────────────────────────────────────────
 
-    def _download_file(self, cdn_url: str, filepath: Path, filename: str) -> str:
+    def _download_file(self, cdn_url: str, filepath: Path, filename: str, fileurl: str = None) -> str:
         """
         Download the file at cdn_url to filepath.
 
         Returns one of:
-          "ok"          – downloaded successfully
-          "maintenance" – server responded but content looks like HTML / too small
-          "error"       – network / HTTP error
+          "ok"              – downloaded successfully
+          "already_exists"  – file already exists and size matches
+          "maintenance"     – server responded but content looks like HTML / too small
+          "error"           – network / HTTP error
         """
-        self._emit("file_start", f"Downloading {filename}", filename=filename)
+        self._emit("file_start", f"Downloading {filename}", filename=filename, fileurl=fileurl)
 
         dl_headers = {**self.session.headers, "Referer": "https://get.bunkrr.su/"}
 
@@ -291,6 +304,14 @@ class BunkrScraperCore:
                     return "maintenance"
 
                 total = int(r.headers.get("content-length", 0))
+
+                # ── Robust Existence Check ───────────────────────────────────
+                if filepath.exists():
+                    local_size = filepath.stat().st_size
+                    if total > 0 and local_size == total:
+                        return "already_exists"
+                    # If it exists but size doesn't match, we will overwrite (re-download)
+                
                 desc  = f"  {filename[:40]:<40}"
 
                 with _progress_bar(total, desc, disable=bool(self.progress_callback)) as bar, open(filepath, "wb") as fh:
@@ -298,6 +319,10 @@ class BunkrScraperCore:
                     start = time.time()
                     last_pct = -1
                     for chunk in r.iter_content(chunk_size=65536):
+                        # ── Skip Check ────────────────────────────────────────────────
+                        if self.cancel_flags.get(filename, False):
+                            return "skipped"
+
                         if chunk:
                             fh.write(chunk)
                             bar.update(len(chunk))
@@ -314,6 +339,10 @@ class BunkrScraperCore:
                                                filename=filename,
                                                percent=pct, eta=int(eta))
                                     last_pct = pct
+
+             # Check if we were skipped AFTER the context manager finishes normally
+            if self.cancel_flags.get(filename, False):
+                return "skipped"
 
             # Validate: reject suspiciously small files
             size = filepath.stat().st_size
@@ -370,6 +399,9 @@ class BunkrScraperCore:
         album_name = self._album_name(soup)
         album_dir  = Path(self.output_dir) / album_name
         album_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Broadcast the album name specifically to the frontend
+        self._emit("album_info", "Album Discovered", name=album_name)
 
         print(f"  Name  : {album_name}")
         print(f"  Output: {album_dir}\n")
@@ -377,7 +409,12 @@ class BunkrScraperCore:
         self._emit("status", f"Scanning album: {album_name}")
 
         # Initial extraction
-        file_urls = self._get_file_urls(r.text, target_url)
+        if re.search(r"/(f|v)/[a-zA-Z0-9]+", target_url):
+            file_urls = [target_url]
+            discovery_queue = []
+        else:
+            file_urls = self._get_file_urls(r.text, target_url)
+            discovery_queue = [target_url]
         
         # ── Pagination Traversal ──────────────────────────────────────────────
         # Standard albums (not 'advanced=1') use ?page=X links
@@ -442,6 +479,12 @@ class BunkrScraperCore:
         # ── Overall progress bar ──────────────────────────────────────────────
         overall_bar = _progress_bar(total, "  Overall", unit="file", disable=bool(self.progress_callback))
 
+        ok_count = 0
+        error_count = 0
+        maintenance_count = 0
+        skipped_count = 0
+        overall_start = time.time()
+
         def _download_task(idx, file_url):
             self._safe_print(f"\n  [{idx}/{total}] {file_url}")
             self._emit("status", f"Processing {idx}/{total}")
@@ -449,7 +492,7 @@ class BunkrScraperCore:
             bunkrr_url = self._get_bunkrr_url(file_url)
             if not bunkrr_url:
                 self._safe_print("    ✗  Could not find get.bunkrr.su link — skipping")
-                self._emit("file_error", f"No download link for {file_url}", filename=file_url, reason="no_link")
+                self._emit("file_error", f"No download link for {file_url}", filename=file_url, reason="no_link", fileurl=file_url)
                 return "error"
 
             self._safe_print(f"    ↳ {bunkrr_url}")
@@ -457,17 +500,11 @@ class BunkrScraperCore:
             cdn_url = self._get_cdn_url(bunkrr_url)
             if not cdn_url:
                 self._safe_print("    ✗  Could not resolve CDN URL — skipping")
-                self._emit("file_error", f"No CDN URL for {bunkrr_url}", filename=bunkrr_url, reason="no_cdn")
+                self._emit("file_error", f"No CDN URL for {bunkrr_url}", filename=bunkrr_url, reason="no_cdn", fileurl=file_url)
                 return "error"
 
             filename = self._filename_from_cdn_url(cdn_url)
             filepath = album_dir / filename
-
-            if filepath.exists() and filepath.stat().st_size >= self._MIN_VALID_BYTES:
-                self._safe_print(f"    ⊙  Already exists: {filename}")
-                self._emit("file_complete", f"Skipped {filename} (already exists)", filename=filename)
-                time.sleep(0.3)
-                return "ok"
 
             overall_eta = 0
             if idx > 1:
@@ -477,22 +514,22 @@ class BunkrScraperCore:
                 if self.max_workers == 1:
                     self._safe_print(f"    ETA ≈ {int(overall_eta//60)}m {int(overall_eta%60)}s")
 
-            result = self._download_file(cdn_url, filepath, filename)
+            result = self._download_file(cdn_url, filepath, filename, fileurl=file_url)
 
             if result == "ok":
                 self._safe_print(f"    ✓  Saved: {filename}")
-                self._emit("file_complete", f"Downloaded {filename}", filename=filename, overall_eta=int(overall_eta))
+                self._emit("file_complete", f"Downloaded {filename}", filename=filename, overall_eta=int(overall_eta), fileurl=file_url)
+            elif result == "already_exists":
+                self._safe_print(f"    ⊙  Already exists (verified): {filename}")
+                self._emit("file_complete", f"Skipped {filename} (already exists)", filename=filename, fileurl=file_url)
             elif result == "maintenance":
                 self._safe_print(f"    !  Skipped (server maintenance): {filename}")
+            elif result == "skipped" or result == "error":
+                self._emit("file_error", f"Process aborted", filename=filename, reason=result, fileurl=file_url)
 
             time.sleep(1)
             return result
 
-        ok_count          = 0
-        maintenance_count = 0
-        error_count       = 0
-        overall_start     = time.time()
-        
         mode_str = f"Parallel ({self.max_workers}x)" if self.max_workers > 1 else "Sequential"
         self._safe_print(f"  Mode: {mode_str}\n")
 
@@ -500,10 +537,14 @@ class BunkrScraperCore:
             futures = {executor.submit(_download_task, idx, url): url for idx, url in enumerate(file_urls, 1)}
             for future in as_completed(futures):
                 try:
-                    res = future.result()
-                    if res == "ok":
+                    task_result = future.result()
+                    if task_result == "ok":
                         ok_count += 1
-                    elif res == "maintenance":
+                    elif task_result == "skipped":
+                        self._safe_print(f"    -  File skipped")
+                        skipped_count += 1
+                        self._emit("file_error", f"Skipped", reason="skipped")
+                    elif task_result == "maintenance":
                         maintenance_count += 1
                     else:
                         error_count += 1
@@ -521,6 +562,8 @@ class BunkrScraperCore:
         self._safe_print(f"{'-'*W}")
         self._safe_print(f"  Total          : {total}")
         self._safe_print(f"  v  Downloaded  : {ok_count}")
+        if skipped_count:
+            self._safe_print(f"  -  Skipped     : {skipped_count}")
         if maintenance_count:
             self._safe_print(f"  !  Maintenance : {maintenance_count}  (server temporarily unavailable)")
         if error_count:
@@ -533,6 +576,7 @@ class BunkrScraperCore:
             "total":       total,
             "downloaded":  ok_count,
             "maintenance": maintenance_count,
+            "skipped":     skipped_count,
             "failed":      error_count,
             "output_dir":  str(album_dir),
         }

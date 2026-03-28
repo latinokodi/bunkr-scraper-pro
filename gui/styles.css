@@ -458,8 +458,92 @@ body {
 .val-group .separator { color: var(--text-dim); margin: 0 8px; font-weight: 400; }
 .neon-cyan { color: var(--neon-cyan); text-shadow: 0 0 10px rgba(0, 242, 254, 0.2); }
 .neon-purple { color: var(--neon-purple); text-shadow: 0 0 10px rgba(191, 90, 242, 0.2); }
-.neon-red { color: var(--neon-red); text-shadow: 0 0 10px rgba(255, 55, 95, 0.2); }
-.neon-green { color: var(--neon-green); text-shadow: 0 0 10px rgba(52, 211, 153, 0.2); }
+.neon-red { color: var(--neon-red); text-shadow: var(--glow-red); }
+.neon-green { color: var(--neon-green); text-shadow: var(--glow-green); }
+
+/* Queue & Skips */
+.queue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: var(--bg-card);
+    padding: 0;
+    overflow: hidden;
+}
+
+.queue-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid var(--border-dim);
+}
+.queue-item:last-child {
+    border-bottom: none;
+}
+.queue-url {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 60%;
+}
+.queue-actions button {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: 0.2s;
+}
+.queue-actions button:hover {
+    color: var(--neon-red);
+}
+
+.skip-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    margin-left: 8px;
+    padding: 2px;
+    border-radius: 4px;
+    transition: 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.skip-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-main);
+}
+
+.retry-btn {
+    background: transparent;
+    border: none;
+    color: var(--neon-green);
+    cursor: pointer;
+    margin-left: 8px;
+    padding: 2px;
+    border-radius: 4px;
+    transition: 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.8;
+}
+.retry-btn:hover {
+    background: rgba(52, 211, 153, 0.1);
+    opacity: 1;
+    transform: scale(1.1);
+}
+
+.status-badge.skipped {
+    background: rgba(255, 170, 0, 0.1);
+    color: #ffaa00;
+    border: 1px solid rgba(255, 170, 0, 0.2);
+}
 
 /* Files Section */
 .files-section {
