@@ -1,10 +1,12 @@
 # Bunkr Scraper PRO 🚀
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0/)
 [![Electron](https://img.shields.io/badge/Framework-Electron-blueviolet)](https://www.electronjs.org/)
 [![Python](https://img.shields.io/badge/Language-Python%203.12-yellow)](https://www.python.org/)
 
 **Bunkr Scraper PRO** es una herramienta de escritorio potente y elegante diseñada para descargar contenido multimedia de álbumes de Bunkr de forma automatizada. Combina la velocidad de un motor de scraping en Python con una interfaz moderna y futurista construida en Electron.
+
+Copyright (c) 2026 **latinokodi**
 
 ![Demo Screenshot](https://via.placeholder.com/1200x675/0a0a0c/00f2fe?text=Bunkr+Scraper+PRO+Dashboard)
 
