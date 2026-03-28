@@ -314,7 +314,7 @@ window.onPythonProgress = function (data) {
     }
 
     if (data.type === 'file_progress') {
-        updateTableRowProgress(data.filename, data.percent, data.eta);
+        updateTableRowProgress(data.filename, data.percent, data.eta, data.speed);
     }
 
     if (data.type === 'file_complete') {
@@ -364,6 +364,7 @@ function addTableRow(filename, fileurl = '') {
         <div class="col-progress row-progress-container">
             <div class="row-progress-info">
                 <span class="pct">0%</span>
+                <span class="speed">0 B/s</span>
                 <span class="eta">Pending...</span>
             </div>
             <div class="row-progress-bar">
@@ -378,16 +379,18 @@ function addTableRow(filename, fileurl = '') {
 }
 
 /** Update Table Row Progress */
-function updateTableRowProgress(filename, percent, eta) {
+function updateTableRowProgress(filename, percent, eta, speed) {
     const row = document.querySelector(`[data-filename="${filename}"]`);
     if (!row) return;
 
     const fill = row.querySelector('.row-progress-fill');
     const pct  = row.querySelector('.pct');
     const e    = row.querySelector('.eta');
+    const s    = row.querySelector('.speed');
 
     if (fill) fill.style.width = `${percent}%`;
     if (pct)  pct.textContent  = `${percent}%`;
+    if (s)    s.textContent    = formatSpeed(speed || 0);
     if (e)    e.textContent    = eta > 0 ? formatSecs(eta) : (percent >= 100 ? 'Finishing' : '...');
 }
 
@@ -449,6 +452,14 @@ function formatSecs(s) {
     const m = Math.floor(s / 60);
     const sec = s % 60;
     return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+}
+
+/** Format Speed */
+function formatSpeed(bytes) {
+    if (!bytes || bytes <= 0) return '0 B/s';
+    const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
 /** Toast Notifications */

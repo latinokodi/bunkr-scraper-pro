@@ -684,6 +684,11 @@ body {
     font-family: 'JetBrains Mono', monospace;
 }
 
+.row-progress-info .speed {
+    color: var(--neon-purple);
+    font-weight: 700;
+}
+
 /* Empty State */
 .empty-state {
     padding: 80px 0;

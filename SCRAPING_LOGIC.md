@@ -95,6 +95,20 @@ The decrypted URL points to the real file server (e.g., `*.scdn.st/*.mp4`).
 
 ---
 
+## 🧩 Modular Structure
+
+The scraper has been refactored into a **clean, modular package** in `bunkr_core/` to make it easier to maintain and extend:
+
+| Module | Responsibility |
+|:---|:---|
+| [`scraper_engine.py`](file:///f:/PyApps/bunkrscr/bunkr_core/scraper_engine.py) | **Orchestrator**: Thread pool, session management, and `scrape()` loop. |
+| [`site_parser.py`](file:///f:/PyApps/bunkrscr/bunkr_core/site_parser.py) | **Parser**: Logic for extracting links from albums and individual file pages. |
+| [`crypto.py`](file:///f:/PyApps/bunkrscr/bunkr_core/crypto.py) | **Crypto**: Reverse-engineered XOR decryption functionality. |
+| [`ui_helpers.py`](file:///f:/PyApps/bunkrscr/bunkr_core/ui_helpers.py) | **UI**: Console progress bars (tqdm/manual) and status emitters. |
+| [`utils.py`](file:///f:/PyApps/bunkrscr/bunkr_core/utils.py) | **Utils**: Filename sanitization and OS-level helper functions. |
+
+---
+
 ## ⚖️ License & Usage
 
 The project uses the **PolyForm Noncommercial License 1.0.0**.

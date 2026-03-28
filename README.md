@@ -19,6 +19,7 @@ Copyright (c) 2026 **latinokodi**
 - ⏹️ **Control Total**: Botón de **STOP** para abortar descargas en curso de forma segura.
 - 💾 **Persistencia**: Recuerda tu última ruta de descarga seleccionada para la próxima sesión.
 - 🛠️ **Robusto**: Manejo de errores para servidores en mantenimiento o archivos caídos.
+- 🧩 **Arquitectura Modular**: Motor de scraping organizado en paquetes para facilitar su mantenimiento y futuras expansiones.
 
 ## 🚀 Instalación y Configuración
 
@@ -52,7 +53,7 @@ Este script se encargará de:
 
 - **Frontend**: HTML5, CSS3 (Vanilla + Glassmorphism), JavaScript (ES6).
 - **Runtime**: Electron.js (con IPC bridge seguro mediante `preload.js`).
-- **Backend (Engine)**: Python 3.12 utilizando la librería `requests` para flujos de datos de alta velocidad y `BeautifulSoup` para parsing de HTML.
+- **Backend (Engine)**: Python 3.12 utilizando un **motor modular** (`bunkr_core`) que utiliza `requests` para flujos de datos de alta velocidad y `BeautifulSoup` para parsing de HTML.
 - **Seguridad**: Comunicación aislada entre procesos mediante `contextBridge`.
 
 ## 📄 Licencia
