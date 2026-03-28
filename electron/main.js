@@ -18,12 +18,13 @@ let activeProcess = null;   // currently running Python child
 // ── Window ────────────────────────────────────────────────────────────────────
 function createWindow() {
     mainWindow = new BrowserWindow({
-        width:           950,
-        height:          800,
-        minWidth:        700,
-        minHeight:       550,
+        width:           1200,
+        height:          900,
+        minWidth:        800,
+        minHeight:       600,
         backgroundColor: '#0f0f23',
         autoHideMenuBar: true,
+        fullscreen:      true,    // <--- Always open in full screen
         icon:            path.join(__dirname, 'assets', 'icon.png'),
         webPreferences: {
             preload:          path.join(__dirname, 'preload.js'),
@@ -31,7 +32,7 @@ function createWindow() {
             nodeIntegration:  false,
         },
         titleBarStyle:    'default',
-        title:            'Bunkr Scraper',
+        title:            'Bunkr Scraper PRO',
     });
 
     mainWindow.loadFile(path.join(ROOT, 'gui', 'index.html'));
