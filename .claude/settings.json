@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(taskkill /F /IM \"node.exe\")",
+      "Bash(cmd.exe /c \"taskkill /F /IM electron.exe\")",
+      "Bash(cmd.exe /c \"taskkill /F /IM BunkrScraperPRO.exe\")",
+      "Bash(cmd.exe /c \"taskkill /F /IM node.exe\")",
+      "Bash(npm uninstall:*)",
+      "Bash(powershell -Command \"Remove-Item -Path ''f:\\\\PyApps\\\\bunkrscr\\\\dist\\\\*'' -Recurse -Force -ErrorAction SilentlyContinue\")"
+    ]
+  }
+}

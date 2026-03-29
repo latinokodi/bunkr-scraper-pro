@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe -m pip install pyinstaller --quiet)",
+      "Bash(npm install:*)",
+      "Bash(.venv/Scripts/python.exe -m PyInstaller --onefile --console --name \"scraper_backend\" --distpath \"dist\" --workpath \"build/py_work\" --specpath \"build\" --hidden-import bunkr_core --hidden-import bunkr_core.scraper_engine --hidden-import bunkr_core.site_parser --hidden-import bunkr_core.crypto --hidden-import bunkr_core.utils --hidden-import bunkr_core.ui_helpers --hidden-import requests --hidden-import bs4 --hidden-import tqdm --collect-data bs4 --noupx scraper_core.py)",
+      "Bash(npm run:*)",
+      "Bash(.venv/Scripts/python.exe build_portable.py)",
+      "Bash(start \"\" \"f:/PyApps/bunkrscr/dist/BunkrScraperPRO_Portable/Bunkr Scraper PRO.exe\")",
+      "Bash(tasklist)",
+      "Bash(taskkill /F /IM 'Bunkr Scraper PRO.exe')",
+      "Bash(start \"\" \"BunkrScraperPRO.exe\")",
+      "Bash(\"./BunkrScraperPRO.exe\" --version)",
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(\"./BunkrScraperPRO.exe\")",
+      "Bash(.venv/Scripts/python.exe build_final.py)",
+      "Bash(powershell -Command \"Start-Process -FilePath ''.\\\\BunkrScraperPRO.exe'' -Wait -RedirectStandardOutput ''stdout.txt'' -RedirectStandardError ''stderr.txt''\")",
+      "Bash(taskkill /F /IM \"BunkrScraperPRO.exe\")",
+      "Bash(taskkill /F /IM \"electron.exe\")"
+    ]
+  }
+}
