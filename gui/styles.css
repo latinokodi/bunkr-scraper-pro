@@ -482,13 +482,44 @@ body {
 .queue-item:last-child {
     border-bottom: none;
 }
-.queue-url {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 60%;
+.queue-item.priority {
+    border-left: 3px solid var(--neon-cyan);
+    background: rgba(0, 242, 254, 0.03);
+}
+.priority-tag {
+    font-size: 0.6rem;
+    font-weight: 900;
+    color: var(--neon-cyan);
+    background: rgba(0, 242, 254, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-right: 8px;
+    letter-spacing: 0.05em;
+}
+.queue-info {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+}
+.queue-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+.run-now-btn {
+    background: transparent;
+    border: none;
+    color: var(--neon-cyan);
+    cursor: pointer;
+    transition: 0.2s;
+    opacity: 0.7;
+    display: flex;
+    align-items: center;
+}
+.run-now-btn:hover {
+    opacity: 1;
+    transform: scale(1.1);
 }
 .queue-actions button {
     background: transparent;

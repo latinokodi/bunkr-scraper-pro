@@ -2,21 +2,14 @@
 
 /**
  * Bunkr Scraper PRO - Frontend Logic
- * Updated for the Dashboard REVAMP
+ * Updated for Multiple Concurrent Downloads
  */
 
 // UI State Management
 const state = {
-    isDownloading: false,
-    currentFiles: [],
+    activeDownloads: new Map(),  // Map<taskId, { url, albumName, stats, files }>
     selectedFolder: null,
     concurrency: 3,
-    stats: {
-        total: 0,
-        downloaded: 0,
-        failed: 0,
-        maintenance: 0
-    }
 };
 
 // DOM Elements
@@ -41,7 +34,16 @@ const elements = {
     currentAlbumTitle:  document.getElementById('currentAlbumTitle'),
 };
 
-// Queue Sync Init
+// SVG Icons for statuses
+const icons = {
+    downloading: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>',
+    success:     '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>',
+    error:       '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>',
+    maintenance: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>',
+    stop:        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><rect x="6" y="6" width="12" height="12"></rect></svg>'
+};
+
+// ── Initialization ────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
     const q = await window.electronAPI.getQueue();
     renderQueue(q);
@@ -51,24 +53,96 @@ window.electronAPI.onQueueUpdated((q) => {
     renderQueue(q);
 });
 
+window.electronAPI.onActiveDownloads((downloads) => {
+    renderActiveDownloads(downloads);
+});
+
+// ── Active Downloads Rendering ────────────────────────────────────────────────
+function renderActiveDownloads(downloads) {
+    // Update state
+    const currentIds = new Set(state.activeDownloads.keys());
+    const newIds = new Set(downloads.map(d => d.id));
+
+    // Remove completed downloads from state
+    for (const id of currentIds) {
+        if (!newIds.has(id)) {
+            state.activeDownloads.delete(id);
+        }
+    }
+
+    // Add new downloads
+    for (const d of downloads) {
+        if (!state.activeDownloads.has(d.id)) {
+            state.activeDownloads.set(d.id, {
+                url: d.url,
+                albumName: d.albumName,
+                stats: { total: 0, downloaded: 0, failed: 0 },
+                files: []
+            });
+        } else {
+            // Update album name if provided
+            const existing = state.activeDownloads.get(d.id);
+            if (d.albumName) existing.albumName = d.albumName;
+        }
+    }
+
+    // Update UI
+    updateUIForActiveDownloads();
+}
+
+function updateUIForActiveDownloads() {
+    const count = state.activeDownloads.size;
+
+    if (count === 0) {
+        elements.downloadBtn.disabled = false;
+        elements.downloadBtn.classList.remove('loading');
+        elements.stopBtn.classList.add('hidden');
+        elements.sysStatus.textContent = 'READY';
+        elements.sysStatus.className = 'neon-green';
+        if (elements.sysStatusTile) {
+            elements.sysStatusTile.textContent = 'READY';
+            elements.sysStatusTile.className = 'neon-green';
+        }
+        elements.currentAlbumTitle.textContent = 'Waiting for album...';
+    } else {
+        elements.downloadBtn.disabled = true;
+        elements.downloadBtn.classList.add('loading');
+        elements.stopBtn.classList.remove('hidden');
+        elements.sysStatus.textContent = `DOWNLOADING (${count})`;
+        elements.sysStatus.className = 'neon-cyan';
+        if (elements.sysStatusTile) {
+            elements.sysStatusTile.textContent = `ACTIVE (${count})`;
+            elements.sysStatusTile.className = 'neon-cyan';
+        }
+
+        // Show album names
+        const names = Array.from(state.activeDownloads.values())
+            .map(d => d.albumName || 'Loading...')
+            .join(', ');
+        elements.currentAlbumTitle.textContent = names;
+    }
+}
+
+// ── Queue Rendering ────────────────────────────────────────────────────────────
 function renderQueue(q) {
-    if (!q || q.length <= 1) {
+    if (!q || q.length === 0) {
         elements.queueSection.style.display = 'none';
         return;
     }
     elements.queueSection.style.display = 'block';
-    
-    // We only show items from index 1+ since index 0 is currently processing
-    const waiting = q.slice(1);
-    if (waiting.length === 0) {
-        elements.queueSection.style.display = 'none';
-        return;
-    }
 
-    elements.queueList.innerHTML = waiting.map(task => `
-        <div class="queue-item">
-            <span class="queue-url" title="${task.url}">${task.url}</span>
+    elements.queueList.innerHTML = q.map(task => `
+        <div class="queue-item ${task.isPriority ? 'priority' : ''}">
+            <div class="queue-info">
+                ${task.isPriority ? '<span class="priority-tag">PRIORITY</span>' : ''}
+                <span class="queue-url" title="${task.url}">${task.url}</span>
+            </div>
             <div class="queue-actions">
+                ${!task.isPriority ? `
+                <button class="run-now-btn" onclick="window.electronAPI.startTaskNow('${task.id}')" title="Start Now (Priority)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                </button>
+                ` : ''}
                 <button onclick="window.electronAPI.removeFromQueue('${task.id}')" title="Remove from Queue">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
@@ -77,6 +151,7 @@ function renderQueue(q) {
     `).join('');
 }
 
+// ── File Actions ──────────────────────────────────────────────────────────────
 function skipFile(filename) {
     window.electronAPI.skipFile(filename);
 }
@@ -88,16 +163,14 @@ function retryFile(url, filename) {
     }
     window.electronAPI.addToQueue(url, state.selectedFolder, state.concurrency);
     showToast('success', 'File Re-Queued', filename);
-    
-    // UI Feedback: Reset the row to "Retrying" state
+
     const row = document.querySelector(`[data-filename="${filename}"]`);
     if (row) {
         row.querySelector('.retry-btn')?.remove();
         const badge = row.querySelector('.status-badge');
         badge.className = 'status-badge downloading';
         badge.innerHTML = `${icons.downloading} Retrying`;
-        
-        // Re-inject progress container if it was removed
+
         if (!row.querySelector('.row-progress-container')) {
             const progress = document.createElement('div');
             progress.className = 'col-progress row-progress-container';
@@ -110,21 +183,12 @@ function retryFile(url, filename) {
                     <div class="row-progress-fill" style="width: 0%"></div>
                 </div>
             `;
-            // Insert after badge
             row.insertBefore(progress, badge.nextSibling);
         }
     }
 }
 
-// SVG Icons for statuses
-const icons = {
-    downloading: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>',
-    success:     '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>',
-    error:       '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>',
-    maintenance: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>'
-};
-
-// ── Persistence ────────────────────────────────────────────────────────────
+// ── Persistence ────────────────────────────────────────────────────────────────
 function loadPersistentPath() {
     const saved = localStorage.getItem('lastDownloadPath');
     if (saved) {
@@ -143,28 +207,27 @@ function updatePathDisplay(path) {
     elements.folderPath.title = path;
 }
 
-// Initialize
+// ── Event Listeners ────────────────────────────────────────────────────────────
 elements.urlInput.addEventListener('click', () => elements.urlInput.select());
 elements.urlInput.addEventListener('focus', () => elements.urlInput.select());
-
 elements.downloadBtn.addEventListener('click', () => handleDownload());
-elements.stopBtn.addEventListener('click', handleStop);
+elements.stopBtn.addEventListener('click', handleStopAll);
 elements.browseBtn.addEventListener('click', handleBrowse);
 loadPersistentPath();
 
-
 elements.urlInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') {
-        handleDownload();
-    }
+    if (e.key === 'Enter') handleDownload();
 });
 
-// Setup progress listener
+// ── Progress Listeners ─────────────────────────────────────────────────────────
 window.electronAPI.onDownloadStarted((task) => {
-    state.isDownloading = true;
-    setLoading(true);
-    resetDashboard();
-    elements.currentAlbumTitle.textContent = "Connecting to Bunkr...";
+    state.activeDownloads.set(task.id, {
+        url: task.url,
+        albumName: null,
+        stats: { total: 0, downloaded: 0, failed: 0 },
+        files: []
+    });
+    updateUIForActiveDownloads();
 });
 
 window.electronAPI.onProgress((data) => {
@@ -172,30 +235,24 @@ window.electronAPI.onProgress((data) => {
 });
 
 window.electronAPI.onResult((result) => {
-    if (!state.isDownloading) return; // Ignore if stopped by user
+    const { taskId, success, error, exitCode } = result;
 
-    state.isDownloading = false;
-    setLoading(false);
-    elements.sysStatus.textContent = result.success ? 'COMPLETED' : 'STOPPED';
-    elements.sysStatus.className = result.success ? 'neon-green' : 'neon-red';
-    if (elements.sysStatusTile) {
-        elements.sysStatusTile.textContent = result.success ? 'COMPLETED' : 'STOPPED';
-        elements.sysStatusTile.className = result.success ? 'neon-green' : 'neon-red';
+    if (state.activeDownloads.has(taskId)) {
+        state.activeDownloads.delete(taskId);
     }
 
-    if (result.success) {
-        showToast('success', 'Album Complete', `Saved to your output folder`);
-        updateCircle(100);
-        elements.currentAlbumTitle.textContent = "Waiting for next album...";
-    } else if (result.exitCode === -1) {
-        showToast('error', 'Execution Error', 'Python Engine failed to start globally. Retrying automatically..');
+    updateUIForActiveDownloads();
+
+    if (success) {
+        showToast('success', 'Album Complete', 'Saved to your output folder');
+    } else if (exitCode === -1) {
+        showToast('error', 'Execution Error', 'Python Engine failed to start');
     } else {
-        showToast('error', 'Process Error', result.error || 'The scraper exited unexpectedly');
-        elements.currentAlbumTitle.textContent = "Error during download";
+        showToast('error', 'Process Error', error || 'The scraper exited unexpectedly');
     }
 });
 
-/** Browse Folder */
+// ── Handlers ──────────────────────────────────────────────────────────────────
 async function handleBrowse() {
     try {
         const path = await window.electronAPI.selectFolder();
@@ -209,23 +266,13 @@ async function handleBrowse() {
     }
 }
 
-/** Stop Download */
-function handleStop() {
-    if (state.isDownloading) {
-        window.electronAPI.stopDownload();
-        state.isDownloading = false;
-        setLoading(false);
-        elements.sysStatus.textContent = 'STOPPED BY USER';
-        elements.sysStatus.className = 'neon-red';
-        if (elements.sysStatusTile) {
-            elements.sysStatusTile.textContent = 'STOPPED';
-            elements.sysStatusTile.className = 'neon-red';
-        }
-        showToast('info', 'Process Canceled', 'The download was stopped manually');
-    }
+function handleStopAll() {
+    window.electronAPI.stopDownload();  // No ID = stop all
+    state.activeDownloads.clear();
+    updateUIForActiveDownloads();
+    showToast('info', 'Stopped', 'All downloads have been stopped');
 }
 
-/** Main Download Entry */
 function handleDownload() {
     const url = elements.urlInput.value.trim();
 
@@ -239,42 +286,12 @@ function handleDownload() {
         return;
     }
 
-    // Pass directly to the Electron Persistent Queue
-    window.electronAPI.addToQueue(url, state.selectedFolder, state.concurrency);
-    
-    showToast('success', 'Added to Queue', url);
-    elements.urlInput.value = ''; // Clean input
+    window.electronAPI.addToQueue(url, state.selectedFolder, state.concurrency, true);
+    showToast('success', 'Download Started', url);
+    elements.urlInput.value = '';
 }
 
-/** Set Loading UI State */
-function setLoading(loading) {
-    if (loading) {
-        elements.downloadBtn.classList.add('loading');
-        elements.downloadBtn.disabled = true;
-        elements.stopBtn.classList.remove('hidden');
-        elements.sysStatus.textContent = 'SCRAPING...';
-        elements.sysStatus.className = 'neon-cyan';
-        if (elements.sysStatusTile) {
-            elements.sysStatusTile.textContent = 'SCRAPING...';
-            elements.sysStatusTile.className = 'neon-cyan';
-        }
-    } else {
-        elements.downloadBtn.classList.remove('loading');
-        elements.downloadBtn.disabled = false;
-        elements.stopBtn.classList.add('hidden');
-    }
-}
-
-/** Reset Dashboard */
-function resetDashboard() {
-    elements.filesList.innerHTML = '';
-    updateCircle(0);
-    elements.etaValue.textContent = '--:--';
-    state.stats = { total: 0, downloaded: 0, failed: 0, maintenance: 0 };
-    updateStatsDisplay();
-}
-
-/** Update Global Progress Circle */
+// ── Progress Circle ───────────────────────────────────────────────────────────
 function updateCircle(percent) {
     elements.circularPercent.textContent = `${percent}%`;
     const radius = 85;
@@ -283,34 +300,43 @@ function updateCircle(percent) {
     elements.progressCircle.style.strokeDashoffset = offset;
 }
 
-/** Update Stat Hero Grid */
-function updateStatsDisplay() {
-    elements.totalFiles.textContent      = state.stats.total;
-    elements.downloadedFiles.textContent = state.stats.downloaded;
-    elements.failedFiles.textContent     = state.stats.failed;
+function resetDashboard() {
+    elements.filesList.innerHTML = '';
+    updateCircle(0);
+    elements.etaValue.textContent = '--:--';
 }
 
-/** Handle Incoming Python Progress Events */
+function updateStatsDisplay() {
+    let total = 0, downloaded = 0, failed = 0;
+    for (const download of state.activeDownloads.values()) {
+        total += download.stats.total;
+        downloaded += download.stats.downloaded;
+        failed += download.stats.failed;
+    }
+    elements.totalFiles.textContent = total;
+    elements.downloadedFiles.textContent = downloaded;
+    elements.failedFiles.textContent = failed;
+}
+
+// ── Python Progress Handler ───────────────────────────────────────────────────
 window.onPythonProgress = function (data) {
+    const taskId = data.taskId;
+    if (!taskId || !state.activeDownloads.has(taskId)) return;
+
+    const download = state.activeDownloads.get(taskId);
+
     if (data.type === 'album_info') {
-        const title = data.name || "Unknown Album";
-        elements.currentAlbumTitle.textContent = `Downloading: ${title}`;
-        
-        // Wipe dashboard cleanly for the new process
-        if (!state.isDownloading) {
-            state.isDownloading = true;
-            setLoading(true);
-        }
-        resetDashboard();
+        download.albumName = data.name || "Unknown Album";
+        updateUIForActiveDownloads();
     }
 
     if (data.type === 'found_files') {
-        state.stats.total = data.total;
+        download.stats.total = data.total;
         updateStatsDisplay();
     }
 
     if (data.type === 'file_start') {
-        addTableRow(data.filename, data.fileurl);
+        addTableRow(data.filename, data.fileurl, taskId);
     }
 
     if (data.type === 'file_progress') {
@@ -318,12 +344,12 @@ window.onPythonProgress = function (data) {
     }
 
     if (data.type === 'file_complete') {
-        state.stats.downloaded++;
+        download.stats.downloaded++;
         updateStatsDisplay();
         updateTableRowStatus(data.filename, 'success', data.fileurl);
-        
-        const totalDone = state.stats.downloaded + state.stats.failed;
-        const total = state.stats.total > 0 ? state.stats.total : 1;
+
+        const totalDone = download.stats.downloaded + download.stats.failed;
+        const total = download.stats.total > 0 ? download.stats.total : 1;
         updateCircle(Math.round((totalDone / total) * 100));
 
         if (data.overall_eta) {
@@ -332,13 +358,12 @@ window.onPythonProgress = function (data) {
     }
 
     if (data.type === 'file_error') {
-        state.stats.failed++;
+        download.stats.failed++;
         const status = data.reason === 'maintenance' ? 'maintenance' : (data.reason === 'skipped' ? 'skipped' : 'error');
-        
-        // Ensure row exists
+
         const existing = document.querySelector(`[data-filename="${data.filename}"]`);
-        if (!existing && data.filename) addTableRow(data.filename, data.fileurl);
-        
+        if (!existing && data.filename) addTableRow(data.filename, data.fileurl, taskId);
+
         if (data.filename) {
             updateTableRowStatus(data.filename, status, data.fileurl);
         }
@@ -346,9 +371,8 @@ window.onPythonProgress = function (data) {
     }
 };
 
-/** Create Table Row */
-function addTableRow(filename, fileurl = '') {
-    // Remove empty state if present
+// ── Table Row Management ──────────────────────────────────────────────────────
+function addTableRow(filename, fileurl = '', taskId = '') {
     const empty = elements.filesList.querySelector('.empty-state');
     if (empty) empty.remove();
 
@@ -356,6 +380,7 @@ function addTableRow(filename, fileurl = '') {
     row.className = 'table-row';
     row.dataset.filename = filename;
     row.dataset.fileurl = fileurl;
+    row.dataset.taskId = taskId;
     row.innerHTML = `
         <div class="col-name file-name-cell" title="${filename}">${filename}</div>
         <div class="col-status">
@@ -378,7 +403,6 @@ function addTableRow(filename, fileurl = '') {
     elements.filesList.prepend(row);
 }
 
-/** Update Table Row Progress */
 function updateTableRowProgress(filename, percent, eta, speed) {
     const row = document.querySelector(`[data-filename="${filename}"]`);
     if (!row) return;
@@ -394,12 +418,10 @@ function updateTableRowProgress(filename, percent, eta, speed) {
     if (e)    e.textContent    = eta > 0 ? formatSecs(eta) : (percent >= 100 ? 'Finishing' : '...');
 }
 
-/** Update Table Row Status */
 function updateTableRowStatus(filename, status, fileurl = '') {
     const row = document.querySelector(`[data-filename="${filename}"]`);
     if (!row) return;
 
-    // Update fileurl if provided
     if (fileurl) row.dataset.fileurl = fileurl;
 
     const badge = row.querySelector('.status-badge');
@@ -425,8 +447,7 @@ function updateTableRowStatus(filename, status, fileurl = '') {
     if (status !== 'downloading') {
         const info = row.querySelector('.row-progress-info');
         if (info) info.remove();
-        
-        // Remove skip button and potentially add retry button
+
         const skipBtn = row.querySelector('.skip-btn');
         if (skipBtn) skipBtn.remove();
 
@@ -444,9 +465,7 @@ function updateTableRowStatus(filename, status, fileurl = '') {
     }
 }
 
-
-
-/** Format Seconds */
+// ── Utility Functions ─────────────────────────────────────────────────────────
 function formatSecs(s) {
     if (s <= 0) return '0s';
     const m = Math.floor(s / 60);
@@ -454,7 +473,6 @@ function formatSecs(s) {
     return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
 }
 
-/** Format Speed */
 function formatSpeed(bytes) {
     if (!bytes || bytes <= 0) return '0 B/s';
     const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
@@ -462,14 +480,11 @@ function formatSpeed(bytes) {
     return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
-/** Toast Notifications */
 function showToast(type, title, text) {
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
-    
-    // Choose icon
-    let iconSvg = icons.info || '';
-    if (type === 'success') iconSvg = icons.success;
+
+    let iconSvg = icons.success;
     if (type === 'error') iconSvg = icons.error;
 
     toast.innerHTML = `

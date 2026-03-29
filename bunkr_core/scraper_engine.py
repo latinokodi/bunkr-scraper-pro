@@ -141,14 +141,52 @@ class BunkrScraperCore:
             self._safe_print(f"    ✗ Merge error: {e}")
             return "error"
 
+    def _perform_streaming_download(self, r, filepath: Path, filename: str, total: int) -> str:
+        """Helper to execute a non-chunked, sequential stream download."""
+        try:
+            desc = f"  {filename[:40]:<40}"
+            with get_progress_bar(total, desc, disable=bool(self.progress_callback)) as bar, open(filepath, "wb") as fh:
+                downloaded = 0
+                start = time.time()
+                last_pct = -1
+                for chunk in r.iter_content(chunk_size=65536):
+                    if self.cancel_flags.get(filename, False):
+                        return "skipped"
+
+                    if chunk:
+                        fh.write(chunk)
+                        bar.update(len(chunk))
+                        downloaded += len(chunk)
+
+                        if total > 0 and self.progress_callback:
+                            pct = int(downloaded / total * 100)
+                            if (pct - last_pct) >= 2 or pct == 100:
+                                elapsed = time.time() - start
+                                speed   = downloaded / elapsed if elapsed > 0 else 0
+                                eta     = (total - downloaded) / speed if speed > 0 else 0
+                                self._emit("file_progress", f"Downloading {filename}",
+                                           filename=filename, percent=pct, eta=int(eta), speed=int(speed))
+                                last_pct = pct
+
+            if self.cancel_flags.get(filename, False):
+                return "skipped"
+
+            if filepath.stat().st_size < self._MIN_VALID_BYTES:
+                filepath.unlink(missing_ok=True)
+                return "too_small"
+
+            return "ok"
+        except Exception as e:
+            self._safe_print(f"    ✗ stream error: {e}")
+            return "error"
+
     def _download_file(self, cdn_url: str, filepath: Path, filename: str, fileurl: str = None) -> str:
         """Download logic with automatic selection between chunked and streaming."""
         self._emit("file_start", f"Downloading {filename}", filename=filename, fileurl=fileurl)
-
         dl_headers = {**self.session.headers, "Referer": "https://get.bunkrr.su/"}
 
+        # ─── ATTEMPT 1: Best Choice (Chunked if Large) ───
         try:
-            # Pre-flight to check size and range support
             with requests.get(cdn_url, headers=dl_headers, stream=True, timeout=60) as r:
                 r.raise_for_status()
                 
@@ -158,55 +196,52 @@ class BunkrScraperCore:
                     return "maintenance"
 
                 total = int(r.headers.get("content-length", 0))
-
                 if filepath.exists() and total > 0 and filepath.stat().st_size == total:
                     return "already_exists"
 
-                # Check if we should use chunked mode
                 if total >= self._CHUNK_MIN_SIZE:
-                    r.close() # Close pre-flight stream
+                    r.close() 
                     result = self._download_file_chunked(cdn_url, filepath, filename, total, fileurl)
-                    if result != "error":
-                        return result
-                    # Fallback to streaming if chunked fails
-
-                # ── Standard Streaming Download (Fallback/Small Files) ───────
-                desc = f"  {filename[:40]:<40}"
-                with get_progress_bar(total, desc, disable=bool(self.progress_callback)) as bar, open(filepath, "wb") as fh:
-                    downloaded = 0
-                    start = time.time()
-                    last_pct = -1
-                    for chunk in r.iter_content(chunk_size=65536):
-                        if self.cancel_flags.get(filename, False):
-                            return "skipped"
-
-                        if chunk:
-                            fh.write(chunk)
-                            bar.update(len(chunk))
-                            downloaded += len(chunk)
-
-                            if total > 0 and self.progress_callback:
-                                pct = int(downloaded / total * 100)
-                                if (pct - last_pct) >= 2 or pct == 100:
-                                    elapsed = time.time() - start
-                                    speed   = downloaded / elapsed if elapsed > 0 else 0
-                                    eta     = (total - downloaded) / speed if speed > 0 else 0
-                                    self._emit("file_progress", f"Downloading {filename}",
-                                               filename=filename, percent=pct, eta=int(eta), speed=int(speed))
-                                    last_pct = pct
-
-            if self.cancel_flags.get(filename, False):
-                return "skipped"
-
-            if filepath.stat().st_size < self._MIN_VALID_BYTES:
-                filepath.unlink(missing_ok=True)
-                self._emit("file_error", f"File too small: {filename}", filename=filename, reason="too_small")
-                return "maintenance"
-
-            return "ok"
+                else:
+                    result = self._perform_streaming_download(r, filepath, filename, total)
+                
+                if result != "error" and result != "too_small":
+                    return result
+                
+                if result == "too_small":
+                    self._emit("file_error", f"File too small: {filename}", filename=filename, reason="too_small")
+                    return "maintenance"
 
         except Exception as exc:
-            self._safe_print(f"    ✗ error: {exc}")
+            self._safe_print(f"    ✗ Attempt 1 failed: {exc}")
+
+        # ─── ATTEMPT 2: Automatic Retry (No Chunks) ───
+        if self.cancel_flags.get(filename, False):
+            return "skipped"
+
+        self._safe_print(f"    ↻ Retrying... (Standard Mode): {filename}")
+        self._emit("file_progress", f"Retrying {filename}...", filename=filename, percent=0)
+        
+        if filepath.exists(): filepath.unlink()
+        time.sleep(2)
+
+        try:
+            with requests.get(cdn_url, headers=dl_headers, stream=True, timeout=60) as r:
+                r.raise_for_status()
+                total = int(r.headers.get("content-length", 0))
+                result = self._perform_streaming_download(r, filepath, filename, total)
+                
+                if result == "too_small":
+                    self._emit("file_error", f"File too small: {filename}", filename=filename, reason="too_small")
+                    return "maintenance"
+                
+                if result == "error":
+                    self._emit("file_error", f"Error: {filename}", filename=filename, reason="failed_after_retry")
+                
+                return result
+
+        except Exception as exc:
+            self._safe_print(f"    ✗ Retry failed: {exc}")
             filepath.unlink(missing_ok=True)
             self._emit("file_error", f"Error: {filename}", filename=filename, error=str(exc))
             return "error"

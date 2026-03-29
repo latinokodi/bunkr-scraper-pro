@@ -6,7 +6,10 @@
       "Bash(cmd.exe /c \"taskkill /F /IM BunkrScraperPRO.exe\")",
       "Bash(cmd.exe /c \"taskkill /F /IM node.exe\")",
       "Bash(npm uninstall:*)",
-      "Bash(powershell -Command \"Remove-Item -Path ''f:\\\\PyApps\\\\bunkrscr\\\\dist\\\\*'' -Recurse -Force -ErrorAction SilentlyContinue\")"
+      "Bash(powershell -Command \"Remove-Item -Path ''f:\\\\PyApps\\\\bunkrscr\\\\dist\\\\*'' -Recurse -Force -ErrorAction SilentlyContinue\")",
+      "Bash(node -e \"console.log\\(require\\(''electron''\\)\\)\")",
+      "Bash(node_modules/.bin/electron --version)",
+      "Bash(\"f:/PyApps/bunkrscr/electron/node_modules/electron/dist/electron.exe\" --version)"
     ]
   }
 }

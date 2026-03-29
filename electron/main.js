@@ -6,14 +6,86 @@ const { spawn } = require('child_process');
 const fs    = require('fs');
 
 // ── Resolve Python executable inside the venv ─────────────────────────────────
-const ROOT       = path.join(__dirname, '..');          // f:\PyApps\bunkrscr
+const ROOT       = path.join(__dirname, '..');
 const VENV_PY    = path.join(ROOT, '.venv', 'Scripts', 'python.exe');
 const SYS_PY     = 'python';
 const PYTHON_EXE = fs.existsSync(VENV_PY) ? VENV_PY : SYS_PY;
 const SCRAPER    = path.join(ROOT, 'scraper_core.py');
 
+const MAX_STANDARD_CONCURRENT = 3;
+const MAX_PRIORITY_CONCURRENT = 3;
+let activeProcesses = new Map();  // Map<id, { process, task, files: Set<filename>, isPriority: boolean }>
+let downloadQueue = [];
+let QUEUE_FILE = null;
 let mainWindow;
-let activeProcess = null;   // currently running Python child
+
+// ── Queue Management ─────────────────────────────────────────────────────────
+function loadQueue() {
+    try {
+        if (QUEUE_FILE && fs.existsSync(QUEUE_FILE)) {
+            const data = fs.readFileSync(QUEUE_FILE, 'utf8');
+            if (data.trim() !== '') downloadQueue = JSON.parse(data);
+        }
+    } catch(err) { console.error('[main] Error loading queue', err); }
+}
+
+function saveQueue() {
+    try {
+        if (QUEUE_FILE) fs.writeFileSync(QUEUE_FILE, JSON.stringify(downloadQueue, null, 2));
+    } catch(err) { console.error('[main] Error saving queue', err); }
+}
+
+function getActiveCount(priorityOnly = false) {
+    let count = 0;
+    for (const [, entry] of activeProcesses) {
+        if (priorityOnly) {
+            if (entry.isPriority) count++;
+        } else {
+            if (!entry.isPriority) count++;
+        }
+    }
+    return count;
+}
+
+function processQueue() {
+    // 1. Process Priority Tasks (if any in queue marked as priority)
+    const priorityTasks = downloadQueue.filter(t => t.isPriority);
+    while (getActiveCount(true) < MAX_PRIORITY_CONCURRENT && priorityTasks.length > 0) {
+        const task = priorityTasks.shift();
+        // Remove from main queue
+        downloadQueue = downloadQueue.filter(t => t.id !== task.id);
+        startPythonScraper(task, true);
+        saveQueue();
+    }
+
+    // 2. Process Standard Tasks
+    const standardTasks = downloadQueue.filter(t => !t.isPriority);
+    while (getActiveCount(false) < MAX_STANDARD_CONCURRENT && standardTasks.length > 0) {
+        const task = standardTasks.shift();
+        // Remove from main queue
+        downloadQueue = downloadQueue.filter(t => t.id !== task.id);
+        startPythonScraper(task, false);
+        saveQueue();
+    }
+
+    // Notify UI of updated queue and active downloads
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('queue-updated', downloadQueue);
+        mainWindow.webContents.send('active-downloads', getActiveDownloadInfo());
+    }
+}
+
+function getActiveDownloadInfo() {
+    const info = [];
+    for (const [id, entry] of activeProcesses) {
+        info.push({
+            id: id,
+            url: entry.task.url,
+            albumName: entry.albumName || 'Loading...'
+        });
+    }
+    return info;
+}
 
 // ── Window ────────────────────────────────────────────────────────────────────
 function createWindow() {
@@ -24,7 +96,7 @@ function createWindow() {
         minHeight:       600,
         backgroundColor: '#0f0f23',
         autoHideMenuBar: true,
-        show:            false,   // Don't show immediately to prevent flash
+        show:            false,
         icon:            path.join(__dirname, 'assets', 'icon.png'),
         webPreferences: {
             preload:          path.join(__dirname, 'preload.js'),
@@ -42,165 +114,180 @@ function createWindow() {
         mainWindow.show();
     });
 
-    // Open external links in the system browser
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
         shell.openExternal(url);
         return { action: 'deny' };
     });
 }
 
+// ── App Lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+    // Initialize queue file path after app is ready
+    QUEUE_FILE = path.join(app.getPath('userData'), 'bunkr_queue.json');
+
+    // Load any saved queue from previous session
+    loadQueue();
+
     createWindow();
+
+    // Process any pending queue items from previous session
+    processQueue();
+
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
 });
 
 app.on('window-all-closed', () => {
-    if (activeProcess) activeProcess.kill();
+    // Kill all active processes
+    for (const [, entry] of activeProcesses) {
+        entry.process.kill();
+    }
+    activeProcesses.clear();
     if (process.platform !== 'darwin') app.quit();
 });
 
-
-
-// ── Queue Management ─────────────────────────────────────────────────────────
-const QUEUE_FILE = path.join(app.getPath('userData'), 'bunkr_queue.json');
-let downloadQueue = [];
-
-function loadQueue() {
-    try {
-        if (fs.existsSync(QUEUE_FILE)) {
-            const data = fs.readFileSync(QUEUE_FILE, 'utf8');
-            if (data.trim() !== '') downloadQueue = JSON.parse(data);
-        }
-    } catch(err) { console.error('[main] Error loading queue', err); }
-}
-
-function saveQueue() {
-    try { fs.writeFileSync(QUEUE_FILE, JSON.stringify(downloadQueue, null, 2)); }
-    catch(err) { console.error('[main] Error saving queue', err); }
-}
-
-function processQueue() {
-    if (activeProcess || downloadQueue.length === 0) return;
-    const task = downloadQueue[0];
-    startPythonScraper(task);
-}
-
-loadQueue();
-
+// ── IPC Handlers ──────────────────────────────────────────────────────────────
 ipcMain.handle('get-queue', () => downloadQueue);
 
-ipcMain.on('add-to-queue', (event, task) => {
-    // Add a unique ID if it doesn't have one
+ipcMain.handle('get-active-downloads', () => getActiveDownloadInfo());
+
+ipcMain.on('add-to-queue', (_event, task) => {
     task.id = task.id || Date.now().toString() + Math.random().toString(36).substr(2, 5);
+    // isPriority flag comes from options if provided
+    task.isPriority = !!task.isPriority;
+    
     downloadQueue.push(task);
     saveQueue();
     if (mainWindow) mainWindow.webContents.send('queue-updated', downloadQueue);
     processQueue();
 });
 
-ipcMain.on('remove-from-queue', (event, id) => {
+ipcMain.on('remove-from-queue', (_event, id) => {
     downloadQueue = downloadQueue.filter(t => t.id !== id);
     saveQueue();
     if (mainWindow) mainWindow.webContents.send('queue-updated', downloadQueue);
 });
 
-ipcMain.on('skip-file', (event, filename) => {
-    if (activeProcess && activeProcess.stdin) {
-        console.log(`[main] Passing skip request for: ${filename}`);
-        const payload = JSON.stringify({ action: "skip", filename: filename });
-        activeProcess.stdin.write(payload + "\n");
+ipcMain.on('start-task-now', (_event, id) => {
+    const taskIndex = downloadQueue.findIndex(t => t.id === id);
+    if (taskIndex > -1) {
+        downloadQueue[taskIndex].isPriority = true;
+        saveQueue();
+        if (mainWindow) mainWindow.webContents.send('queue-updated', downloadQueue);
+        processQueue();
+    }
+});
+
+ipcMain.on('skip-file', (_event, filename) => {
+    for (const [, entry] of activeProcesses) {
+        if (entry.files.has(filename) && entry.process.stdin) {
+            console.log(`[main] Passing skip request for: ${filename}`);
+            const payload = JSON.stringify({ action: "skip", filename: filename });
+            entry.process.stdin.write(payload + "\n");
+            break;
+        }
     }
 });
 
 // ── Python Process Management ──────────────────────────────────────────────────
-function startPythonScraper({ url, outDir, maxWorkers, id }) {
+function startPythonScraper(task, isPriority = false) {
+    const { url, outDir, maxWorkers, id } = task;
+
     const args = [SCRAPER, url];
     if (outDir) args.push(outDir);
     if (maxWorkers) args.push('--threads', maxWorkers.toString());
 
-    console.log(`[main] Spawning python: ${PYTHON_EXE} ${args.join(' ')}`);
+    console.log(`[main] Spawning [${isPriority ? 'PRIORITY' : 'STANDARD'}] python: ${PYTHON_EXE} ${args.join(' ')}`);
 
     const child = spawn(PYTHON_EXE, args, {
         cwd:  ROOT,
         env:  { ...process.env },
     });
 
-    activeProcess = child;
+    const entry = {
+        process: child,
+        task: task,
+        files: new Set(),
+        albumName: null,
+        isPriority: isPriority
+    };
+    activeProcesses.set(id, entry);
 
-    // Immediately notify UI that the process has launched (avoids stale empty screens)
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('download-started', { url, outDir, maxWorkers, id });
+        mainWindow.webContents.send('active-downloads', getActiveDownloadInfo());
     }
 
     let buffer = '';
 
-    // ── stdout: JSON progress lines ───────────────────────────────────────────
     child.stdout.on('data', (data) => {
         buffer += data.toString();
         const lines = buffer.split('\n');
-        buffer = lines.pop();           // keep incomplete last line
+        buffer = lines.pop();
 
         for (const raw of lines) {
             const line = raw.trim();
             if (!line) continue;
 
-            // Forward JSON progress events to renderer
             if (line.startsWith('{')) {
                 try {
                     const parsed = JSON.parse(line);
-                    mainWindow.webContents.send('progress', parsed);
-                } catch {
-                    // Not JSON — just a plain console log; ignore for UI
-                }
+                    parsed.taskId = id;
+
+                    if (parsed.type === 'album_info' && parsed.name) {
+                        entry.albumName = parsed.name;
+                        if (mainWindow && !mainWindow.isDestroyed()) {
+                            mainWindow.webContents.send('active-downloads', getActiveDownloadInfo());
+                        }
+                    }
+
+                    if (parsed.type === 'file_start' && parsed.filename) {
+                        entry.files.add(parsed.filename);
+                    }
+
+                    if (mainWindow && !mainWindow.isDestroyed()) {
+                        mainWindow.webContents.send('progress', parsed);
+                    }
+                } catch { }
             }
         }
     });
 
-    // ── stderr: log errors but don't crash ───────────────────────────────────
     child.stderr.on('data', (data) => {
         console.error('[python stderr]', data.toString());
     });
 
-    // ── process exit → queue advancement ─────────────────────────────────────
     child.on('close', (code) => {
-        console.log(`[main] Python exited with code ${code}`);
-        activeProcess = null;
+        console.log(`[main] Python ${id} exited with code ${code}`);
+        activeProcesses.delete(id);
 
-        mainWindow.webContents.send('download-result', {
-            success:  code === 0,
-            exitCode: code,
-        });
-
-        // Advance Queue
-        if (downloadQueue.length > 0 && downloadQueue[0].id === id) {
-            downloadQueue.shift();
-            saveQueue();
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('queue-updated', downloadQueue);
-            }
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('download-result', {
+                success:  code === 0,
+                exitCode: code,
+                taskId:   id,
+                url:      url
+            });
+            mainWindow.webContents.send('active-downloads', getActiveDownloadInfo());
         }
+
         processQueue();
     });
 
     child.on('error', (err) => {
         console.error('[main] Failed to spawn Python:', err);
-        activeProcess = null;
+        activeProcesses.delete(id);
 
-        mainWindow.webContents.send('download-result', {
-            success:  false,
-            exitCode: -1,
-            error:    err.message,
-        });
-
-        // Advance Queue on catastrophic failure
-        if (downloadQueue.length > 0 && downloadQueue[0].id === id) {
-            downloadQueue.shift();
-            saveQueue();
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('queue-updated', downloadQueue);
-            }
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('download-result', {
+                success:  false,
+                exitCode: -1,
+                error:    err.message,
+                taskId:   id,
+                url:      url
+            });
+            mainWindow.webContents.send('active-downloads', getActiveDownloadInfo());
         }
         processQueue();
     });
@@ -212,15 +299,29 @@ ipcMain.on('open-downloads', (_event, dir) => {
     shell.openPath(target);
 });
 
-// ── IPC: stop download ────────────────────────────────────────────────────────
-ipcMain.on('stop-download', () => {
-    if (activeProcess) {
-        console.log('[main] Manual stop requested. Killing python process...');
-        activeProcess.kill();
-        activeProcess = null;
+// ── IPC: stop download(s) ──────────────────────────────────────────────────────
+ipcMain.on('stop-download', (_event, taskId) => {
+    if (taskId) {
+        const entry = activeProcesses.get(taskId);
+        if (entry) {
+            console.log(`[main] Stopping download ${taskId}`);
+            entry.process.kill();
+            activeProcesses.delete(taskId);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('active-downloads', getActiveDownloadInfo());
+            }
+            processQueue();
+        }
+    } else {
+        console.log('[main] Stopping all downloads');
+        for (const [, entry] of activeProcesses) {
+            entry.process.kill();
+        }
+        activeProcesses.clear();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('active-downloads', []);
+        }
     }
-    // Note: stopping the active process effectively aborts the current task, 
-    // the 'close' handler will then advance the queue to the next item automatically.
 });
 
 // ── IPC: select folder ────────────────────────────────────────────────────────
@@ -231,9 +332,5 @@ ipcMain.handle('select-folder', async () => {
         buttonLabel: 'Select Folder',
     });
 
-    if (canceled) {
-        return null;
-    } else {
-        return filePaths[0];
-    }
+    return canceled ? null : filePaths[0];
 });
