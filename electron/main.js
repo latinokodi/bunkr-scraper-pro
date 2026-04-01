@@ -18,6 +18,7 @@ let activeProcesses = new Map();  // Map<id, { process, task, files: Set<filenam
 let downloadQueue = [];
 let QUEUE_FILE = null;
 let mainWindow;
+let isShuttingDown = false;
 
 // ── Queue Management ─────────────────────────────────────────────────────────
 function loadQueue() {
@@ -31,7 +32,10 @@ function loadQueue() {
 
 function saveQueue() {
     try {
-        if (QUEUE_FILE) fs.writeFileSync(QUEUE_FILE, JSON.stringify(downloadQueue, null, 2));
+        if (!QUEUE_FILE) return;
+        const activeTasks = Array.from(activeProcesses.values()).map(entry => entry.task);
+        const allTasks = [...activeTasks, ...downloadQueue];
+        fs.writeFileSync(QUEUE_FILE, JSON.stringify(allTasks, null, 2));
     } catch(err) { console.error('[main] Error saving queue', err); }
 }
 
@@ -139,6 +143,9 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+    isShuttingDown = true;
+    saveQueue(); // One final save before killing processes and clearing state
+
     // Kill all active processes
     for (const [, entry] of activeProcesses) {
         entry.process.kill();
@@ -198,8 +205,9 @@ function startPythonScraper(task, isPriority = false) {
     if (outDir) args.push(outDir);
     if (maxWorkers) args.push('--threads', maxWorkers.toString());
     args.push('--retries', '5');
+    if (task.isLinksOnly) args.push('--links-only');
 
-    console.log(`[main] Spawning [${isPriority ? 'PRIORITY' : 'STANDARD'}] python: ${PYTHON_EXE} ${args.join(' ')}`);
+    console.log(`[main] Spawning [${isPriority ? 'PRIORITY' : (task.isLinksOnly ? 'GRABBER' : 'STANDARD')}] python: ${PYTHON_EXE} ${args.join(' ')}`);
 
     const child = spawn(PYTHON_EXE, args, {
         cwd:  ROOT,
@@ -261,6 +269,9 @@ function startPythonScraper(task, isPriority = false) {
 
     child.on('close', (code) => {
         console.log(`[main] Python ${id} exited with code ${code}`);
+        
+        if (isShuttingDown) return; // Prevent state removal during app shutdown
+
         activeProcesses.delete(id);
 
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -273,11 +284,15 @@ function startPythonScraper(task, isPriority = false) {
             mainWindow.webContents.send('active-downloads', getActiveDownloadInfo());
         }
 
+        saveQueue();
         processQueue();
     });
 
     child.on('error', (err) => {
         console.error('[main] Failed to spawn Python:', err);
+        
+        if (isShuttingDown) return;
+
         activeProcesses.delete(id);
 
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -290,6 +305,7 @@ function startPythonScraper(task, isPriority = false) {
             });
             mainWindow.webContents.send('active-downloads', getActiveDownloadInfo());
         }
+        saveQueue();
         processQueue();
     });
 }
@@ -311,6 +327,7 @@ ipcMain.on('stop-download', (_event, taskId) => {
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('active-downloads', getActiveDownloadInfo());
             }
+            saveQueue();
             processQueue();
         }
     } else {
@@ -322,6 +339,7 @@ ipcMain.on('stop-download', (_event, taskId) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('active-downloads', []);
         }
+        saveQueue();
     }
 });
 
@@ -334,4 +352,17 @@ ipcMain.handle('select-folder', async () => {
     });
 
     return canceled ? null : filePaths[0];
+});
+ipcMain.handle('open-folder', async (_event, dir) => {
+    try {
+        const fullPath = path.resolve(ROOT, dir || 'downloads');
+        if (fs.existsSync(fullPath)) {
+            await shell.openPath(fullPath);
+            return true;
+        }
+        return false;
+    } catch (err) {
+        console.error('[main] Failed to open folder:', err);
+        return false;
+    }
 });

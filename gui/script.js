@@ -32,9 +32,27 @@ const elements = {
     queueSection:       document.getElementById('queueSection'),
     queueList:          document.getElementById('queueList'),
     copyAllQueueBtn:    document.getElementById('copyAllQueueBtn'),
+    copyAllActiveBtn:   document.getElementById('copyAllActiveBtn'),
     totalSpeed:         document.getElementById('totalSpeed'),
     currentAlbumTitle:  document.getElementById('currentAlbumTitle'),
+    
+    // Tabs
+    navDashboard:       document.getElementById('navDashboard'),
+    navGrabber:         document.getElementById('navGrabber'),
+    navDownloads:       document.getElementById('navDownloads'),
+    viewDashboard:      document.getElementById('viewDashboard'),
+    viewGrabber:        document.getElementById('viewGrabber'),
+
+    // Grabber View
+    grabberInput:       document.getElementById('grabberInput'),
+    grabBtn:            document.getElementById('grabBtn'),
+    grabberStatus:      document.getElementById('grabberStatus'),
+    grabberList:        document.getElementById('grabberList'),
+    copyAllGrabbedBtn:  document.getElementById('copyAllGrabbedBtn'),
+    clearGrabberBtn:    document.getElementById('clearGrabberBtn'),
 };
+
+let activeGrabberTaskId = null;
 
 // SVG Icons for statuses
 const icons = {
@@ -220,6 +238,16 @@ elements.downloadBtn.addEventListener('click', () => handleDownload());
 elements.stopBtn.addEventListener('click', handleStopAll);
 elements.browseBtn.addEventListener('click', handleBrowse);
 elements.copyAllQueueBtn.addEventListener('click', handleCopyAllQueue);
+elements.copyAllActiveBtn.addEventListener('click', handleCopyAllActive);
+
+elements.navDashboard.addEventListener('click', () => switchTab('dashboard'));
+elements.navGrabber.addEventListener('click', () => switchTab('grabber'));
+elements.navDownloads.addEventListener('click', handleOpenDownloads);
+
+elements.grabBtn.addEventListener('click', handleGrabLinks);
+elements.copyAllGrabbedBtn.addEventListener('click', handleCopyAllGrabbed);
+elements.clearGrabberBtn.addEventListener('click', handleClearGrabber);
+
 loadPersistentPath();
 
 elements.urlInput.addEventListener('keypress', (e) => {
@@ -228,6 +256,8 @@ elements.urlInput.addEventListener('keypress', (e) => {
 
 // ── Progress Listeners ─────────────────────────────────────────────────────────
 window.electronAPI.onDownloadStarted((task) => {
+    if (task.isLinksOnly) return; // Ignore grabber tasks in dashboard state
+
     state.activeDownloads.set(task.id, {
         url: task.url,
         albumName: null,
@@ -238,11 +268,27 @@ window.electronAPI.onDownloadStarted((task) => {
 });
 
 window.electronAPI.onProgress((data) => {
-    window.onPythonProgress(data);
+    if (activeGrabberTaskId && data.taskId === activeGrabberTaskId) {
+        if (data.type === 'found_files') {
+            elements.grabberStatus.textContent = `Resolving ${data.total} direct links...`;
+        }
+        if (data.type === 'file_complete' && data.fileurl) {
+            addGrabberLinkRow(data.filename, data.fileurl);
+        }
+    } else {
+        window.onPythonProgress(data);
+    }
 });
 
 window.electronAPI.onResult((result) => {
     const { taskId, success, error, exitCode } = result;
+
+    if (activeGrabberTaskId && taskId === activeGrabberTaskId) {
+        elements.grabBtn.classList.remove('loading');
+        elements.grabberStatus.textContent = `Resolution complete: ${result.downloaded || 0} links found.`;
+        activeGrabberTaskId = null;
+        return;
+    }
 
     if (state.activeDownloads.has(taskId)) {
         state.activeDownloads.delete(taskId);
@@ -293,7 +339,13 @@ function handleDownload() {
         return;
     }
 
-    window.electronAPI.addToQueue(url, state.selectedFolder, state.concurrency, true);
+    const taskData = {
+        url: url,
+        outDir: state.selectedFolder,
+        maxWorkers: state.concurrency,
+        isPriority: true
+    };
+    window.electronAPI.addToQueue(taskData);
     showToast('success', 'Download Started', url);
     elements.urlInput.value = '';
 }
@@ -304,6 +356,120 @@ async function handleCopyAllQueue() {
     
     const urls = q.map(task => task.url).join('\n');
     copyToClipboard(urls, 'All queue links copied');
+}
+
+function handleCopyAllActive() {
+    const rows = elements.filesList.querySelectorAll('.table-row');
+    if (rows.length === 0) return;
+
+    const urls = Array.from(rows)
+        .map(row => row.dataset.fileurl)
+        .filter(url => url)
+        .join('\n');
+    
+    if (urls) {
+        copyToClipboard(urls, 'All active download links copied');
+    } else {
+        showToast('error', 'Copy Failed', 'No direct URLs found to copy');
+    }
+}
+
+function copyFileUrl(filename) {
+    const row = document.querySelector(`[data-filename="${filename}"]`);
+    if (row && row.dataset.fileurl) {
+        copyToClipboard(row.dataset.fileurl, 'Direct link copied');
+    } else {
+        showToast('error', 'Copy Failed', 'Direct URL not found');
+    }
+}
+
+// ── Tab Management ───────────────────────────────────────────────────────────
+function switchTab(tab) {
+    const views = [elements.viewDashboard, elements.viewGrabber];
+    const navs = [elements.navDashboard, elements.navGrabber];
+
+    views.forEach(v => v.classList.remove('active'));
+    navs.forEach(n => n.classList.remove('active'));
+
+    if (tab === 'dashboard') {
+        elements.viewDashboard.classList.add('active');
+        elements.navDashboard.classList.add('active');
+    } else if (tab === 'grabber') {
+        elements.viewGrabber.classList.add('active');
+        elements.navGrabber.classList.add('active');
+    }
+}
+
+async function handleOpenDownloads() {
+    const path = elements.folderPath.value || 'downloads';
+    const success = await window.electronAPI.openFolder(path);
+    if (!success) {
+        showToast('error', 'Error', 'Could not open folder');
+    }
+}
+
+// ── Link Grabber Logic ───────────────────────────────────────────────────────
+async function handleGrabLinks() {
+    const url = elements.grabberInput.value.trim();
+    if (!url) {
+        showToast('warning', 'Input Required', 'Please enter a Bunkr URL');
+        return;
+    }
+
+    if (!url.includes('bunkr.')) {
+        showToast('error', 'Invalid Link', 'Please provide a valid Bunkr link');
+        return;
+    }
+
+    elements.grabBtn.classList.add('loading');
+    elements.grabberStatus.textContent = 'Resolving album links...';
+    elements.clearGrabberBtn.click(); // Reset list
+
+    const task = {
+        url: url,
+        id: 'grabber_' + Date.now(),
+        isLinksOnly: true
+    };
+    
+    activeGrabberTaskId = task.id;
+    window.electronAPI.addToQueue(task);
+}
+
+function handleClearGrabber() {
+    elements.grabberList.innerHTML = `
+        <div class="empty-state">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+            <p>No links grabbed yet.</p>
+        </div>
+    `;
+    elements.grabberStatus.textContent = 'Enter a link above to start resolution.';
+}
+
+function handleCopyAllGrabbed() {
+    const rows = elements.grabberList.querySelectorAll('.grabbed-link-row');
+    if (rows.length === 0) return;
+
+    const urls = Array.from(rows)
+        .map(row => row.dataset.url)
+        .join('\n');
+    
+    copyToClipboard(urls, `${rows.length} links copied to clipboard`);
+}
+
+function addGrabberLinkRow(filename, url) {
+    const empty = elements.grabberList.querySelector('.empty-state');
+    if (empty) empty.remove();
+
+    const row = document.createElement('div');
+    row.className = 'grabbed-link-row';
+    row.dataset.url = url;
+    row.innerHTML = `
+        <div class="grabbed-url" title="${url}">${url}</div>
+        <button class="copy-link-btn" title="Copy Resolved URL" onclick="copyToClipboard('${url}', 'Link copied')">
+            ${icons.copy}
+        </button>
+    `;
+    elements.grabberList.prepend(row);
 }
 
 // ── Progress Circle ───────────────────────────────────────────────────────────
@@ -436,9 +602,14 @@ function addTableRow(filename, fileurl = '', taskId = '') {
                 <div class="row-progress-fill" style="width: 0%"></div>
             </div>
         </div>
-        <button class="skip-btn" title="Skip File" onclick="skipFile('${filename}')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
-        </button>
+        <div class="row-actions">
+            <button class="copy-link-btn" title="Copy Direct URL" onclick="copyFileUrl('${filename}')">
+                ${icons.copy}
+            </button>
+            <button class="skip-btn" title="Skip File" onclick="skipFile('${filename}')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
+            </button>
+        </div>
     `;
     elements.filesList.prepend(row);
 }

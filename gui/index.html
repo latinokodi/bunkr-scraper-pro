@@ -29,14 +29,14 @@
                     </svg>
                 </div>
                 <nav class="nav-menu">
-                    <div class="nav-item active" title="Dashboard">
+                    <div id="navDashboard" class="nav-item active" title="Dashboard">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
                     </div>
-                    <div class="nav-item" title="Downloads">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    <div id="navGrabber" class="nav-item" title="Link Grabber">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
                     </div>
-                    <div class="nav-item" title="Settings">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    <div id="navDownloads" class="nav-item" title="Open Downloads Folder">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
                     </div>
                 </nav>
             </div>
@@ -47,116 +47,155 @@
 
         <!-- Main Content -->
         <main class="content-area">
-            <!-- Top Command Bar -->
-            <header class="top-bar">
-                <div class="search-container">
-                    <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                    <input type="text" id="urlInput" placeholder="Enter Bunkr Album Link (e.g. https://bunkr.cr/a/...)" spellcheck="false">
-                </div>
-                
-                <div class="path-container" id="browseBtn">
-                    <div class="path-display">
-                        <span class="path-label">SAVE TO:</span>
-                        <input type="text" id="folderPath" readonly placeholder="Default Downloads">
-                    </div>
-                    <button class="icon-btn">
-                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 5.5H7.5L9.5 7.5H17.5V14.5H2.5V5.5Z" /></svg>
-                    </button>
-                </div>
-
-
-
-                <button id="downloadBtn" class="action-btn-primary">
-                    <span class="btn-text">START DOWNLOAD</span>
-                    <div class="btn-loader"></div>
-                </button>
-
-                <button id="stopBtn" class="action-btn-secondary hidden">
-                    <span>STOP</span>
-                </button>
-            </header>
-
-            <!-- Dashboard Grid -->
-            <div class="dashboard-scrollable">
-                <section class="stat-section">
-                    <div class="hero-stats card">
-                        <div class="overall-progress-box">
-                            <div class="circular-progress-container">
-                                <svg class="circular-progress" viewBox="0 0 200 200">
-                                    <circle class="progress-bg" cx="100" cy="100" r="85" />
-                                    <circle id="progressCircle" class="progress-ring" cx="100" cy="100" r="85" />
-                                </svg>
-                                <div class="progress-text">
-                                    <span id="circularPercent">0%</span>
-                                    <label>TOTAL PROGRESS</label>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="details-grid">
-                            <div class="stat-tile">
-                                <label>FILE COUNT</label>
-                                <div class="val-group">
-                                    <span id="downloadedFiles" class="neon-cyan">0</span>
-                                    <span class="separator">/</span>
-                                    <span id="totalFiles">0</span>
-                                </div>
-                            </div>
-                            <div class="stat-tile">
-                                <label>FAILED / MAINT.</label>
-                                <div id="failedFiles" class="neon-red">0</div>
-                            </div>
-                            <div class="stat-tile">
-                                <label>ESTIMATED TIME</label>
-                                <div id="etaValue" class="neon-purple">--:--</div>
-                            </div>
-                            <div class="stat-tile">
-                                <label>TOTAL SPEED</label>
-                                <div id="totalSpeed" class="neon-purple">0 B/s</div>
-                            </div>
-                            <div class="stat-tile">
-                                <label>SYSTEM STATUS</label>
-                                <div id="sysStatus" class="neon-green">READY</div>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="queue-section" style="margin-bottom: 24px; display: none;" id="queueSection">
-                    <div class="section-header">
-                        <h2>Up Next</h2>
-                        <button class="ghost-btn" id="copyAllQueueBtn">COPY ALL URLS</button>
-                    </div>
-                    <div class="card queue-list" id="queueList">
-                        <!-- Queue items injected by JS -->
-                    </div>
-                </section>
-
-                <section class="files-section">
-                    <div class="section-header" style="flex-direction: column; align-items: flex-start;">
-                        <div style="display: flex; justify-content: space-between; width: 100%;">
-                            <h2>Active Downloads</h2>
-                            <div class="header-actions">
-                                <button class="ghost-btn" onclick="elements.filesList.innerHTML=''">CLEAR LOG</button>
-                            </div>
-                        </div>
-                        <h3 id="currentAlbumTitle" class="neon-cyan" style="margin-top: 8px; font-size: 0.9rem; font-weight: 500;">Waiting for album...</h3>
+            <!-- VIEW: DASHBOARD (DOWNLOADING) -->
+            <div id="viewDashboard" class="view-panel active">
+                <header class="top-bar">
+                    <div class="search-container">
+                        <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                        <input type="text" id="urlInput" placeholder="Enter Bunkr Album Link (e.g. https://bunkr.cr/a/...)" spellcheck="false">
                     </div>
                     
-                    <div class="files-table card">
-                        <div class="table-header">
-                            <div class="col-name">FILENAME</div>
-                            <div class="col-status">STATUS</div>
-                            <div class="col-progress">PROGRESS</div>
+                    <div class="path-container" id="browseBtn">
+                        <div class="path-display">
+                            <span class="path-label">SAVE TO:</span>
+                            <input type="text" id="folderPath" readonly placeholder="Default Downloads">
                         </div>
-                        <div id="filesList" class="table-body">
-                            <!-- Rows injected by JS -->
-                            <div class="empty-state">
-                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                                <p>Queue is empty. Enter an album link above to start.</p>
+                        <button class="icon-btn">
+                            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 5.5H7.5L9.5 7.5H17.5V14.5H2.5V5.5Z" /></svg>
+                        </button>
+                    </div>
+
+                    <button id="downloadBtn" class="action-btn-primary">
+                        <span class="btn-text">START DOWNLOAD</span>
+                        <div class="btn-loader"></div>
+                    </button>
+
+                    <button id="stopBtn" class="action-btn-secondary hidden">
+                        <span>STOP</span>
+                    </button>
+                </header>
+
+                <div class="dashboard-scrollable">
+                    <section class="stat-section">
+                        <div class="hero-stats card">
+                            <div class="overall-progress-box">
+                                <div class="circular-progress-container">
+                                    <svg class="circular-progress" viewBox="0 0 200 200">
+                                        <circle class="progress-bg" cx="100" cy="100" r="85" />
+                                        <circle id="progressCircle" class="progress-ring" cx="100" cy="100" r="85" />
+                                    </svg>
+                                    <div class="progress-text">
+                                        <span id="circularPercent">0%</span>
+                                        <label>TOTAL PROGRESS</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="details-grid">
+                                <div class="stat-tile">
+                                    <label>FILE COUNT</label>
+                                    <div class="val-group">
+                                        <span id="downloadedFiles" class="neon-cyan">0</span>
+                                        <span class="separator">/</span>
+                                        <span id="totalFiles">0</span>
+                                    </div>
+                                </div>
+                                <div class="stat-tile">
+                                    <label>FAILED / MAINT.</label>
+                                    <div id="failedFiles" class="neon-red">0</div>
+                                </div>
+                                <div class="stat-tile">
+                                    <label>ESTIMATED TIME</label>
+                                    <div id="etaValue" class="neon-purple">--:--</div>
+                                </div>
+                                <div class="stat-tile">
+                                    <label>TOTAL SPEED</label>
+                                    <div id="totalSpeed" class="neon-purple">0 B/s</div>
+                                </div>
+                                <div class="stat-tile">
+                                    <label>SYSTEM STATUS</label>
+                                    <div id="sysStatus" class="neon-green">READY</div>
+                                </div>
                             </div>
                         </div>
+                    </section>
+
+                    <section class="queue-section" style="margin-bottom: 24px; display: none;" id="queueSection">
+                        <div class="section-header">
+                            <h2>Up Next</h2>
+                            <button class="ghost-btn" id="copyAllQueueBtn">COPY ALL URLS</button>
+                        </div>
+                        <div class="card queue-list" id="queueList">
+                            <!-- Queue items injected by JS -->
+                        </div>
+                    </section>
+
+                    <section class="files-section">
+                        <div class="section-header" style="flex-direction: column; align-items: flex-start;">
+                            <div style="display: flex; justify-content: space-between; width: 100%;">
+                                <h2>Active Downloads</h2>
+                                <div class="header-actions">
+                                    <button class="ghost-btn" id="copyAllActiveBtn">COPY ALL LINKS</button>
+                                    <button class="ghost-btn" onclick="elements.filesList.innerHTML=''">CLEAR LOG</button>
+                                </div>
+                            </div>
+                            <h3 id="currentAlbumTitle" class="neon-cyan" style="margin-top: 8px; font-size: 0.9rem; font-weight: 500;">Waiting for album...</h3>
+                        </div>
+                        
+                        <div class="files-table card">
+                            <div class="table-header">
+                                <div class="col-name">FILENAME</div>
+                                <div class="col-status">STATUS</div>
+                                <div class="col-progress">PROGRESS</div>
+                            </div>
+                            <div id="filesList" class="table-body">
+                                <!-- Rows injected by JS -->
+                                <div class="empty-state">
+                                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                    <p>Queue is empty. Enter an album link above to start.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </div>
+
+            <!-- VIEW: LINK GRABBER -->
+            <div id="viewGrabber" class="view-panel">
+                <header class="top-bar">
+                    <div class="search-container">
+                        <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+                        <input type="text" id="grabberInput" placeholder="Enter Bunkr Album Link to fetch direct CDN links..." spellcheck="false">
                     </div>
-                </section>
+                    
+                    <button id="grabBtn" class="action-btn-primary" style="background: var(--neon-purple-gradient);">
+                        <span class="btn-text">GRAB LINKS</span>
+                        <div class="btn-loader"></div>
+                    </button>
+                </header>
+
+                <div class="dashboard-scrollable">
+                    <section class="grabber-results">
+                        <div class="section-header">
+                            <div>
+                                <h2>Resolved Direct Links</h2>
+                                <p id="grabberStatus" style="font-size: 0.8rem; color: var(--text-dim); margin-top: 4px;">Enter a link above to start resolution.</p>
+                            </div>
+                            <div class="header-actions">
+                                <button class="ghost-btn" id="copyAllGrabbedBtn">COPY ALL LINKS</button>
+                                <button class="ghost-btn" id="clearGrabberBtn">CLEAR LIST</button>
+                            </div>
+                        </div>
+                        
+                        <div class="card grabber-list-container" style="margin-top: 16px; min-height: 400px; display: flex; flex-direction: column;">
+                            <div id="grabberList" class="table-body" style="max-height: calc(100vh - 300px);">
+                                <div class="empty-state">
+                                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+                                    <p>No links grabbed yet.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
             </div>
         </main>
 

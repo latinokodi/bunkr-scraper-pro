@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
     /** Add a download task to the global persistent queue */
-    addToQueue: (url, outDir, maxWorkers, isPriority = false) => ipcRenderer.send('add-to-queue', { url, outDir, maxWorkers, isPriority }),
+    addToQueue: (taskData) => ipcRenderer.send('add-to-queue', taskData),
 
     /** Get the current queue list synchronously */
     getQueue: () => ipcRenderer.invoke('get-queue'),
@@ -47,7 +47,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
 
     /** Open the downloads folder in Explorer */
-    openDownloads: (dir) => ipcRenderer.send('open-downloads', dir),
+    openFolder: (dir) => ipcRenderer.invoke('open-folder', dir),
 
     /** Select a custom destination folder */
     selectFolder: () => ipcRenderer.invoke('select-folder'),

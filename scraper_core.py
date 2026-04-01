@@ -6,6 +6,7 @@ All core logic is now modularized in the 'bunkr_core' package.
 
 import sys
 import argparse
+import json
 from bunkr_core import BunkrScraperCore
 
 # Compatibility: Export _decrypt_url if needed for manual use
@@ -21,6 +22,7 @@ def main():
     parser.add_argument("output", nargs="?", default="downloads", help="Output directory")
     parser.add_argument("--threads", type=int, default=1, help="Max parallel downloads")
     parser.add_argument("--retries", type=int, default=5, help="Max retries per file")
+    parser.add_argument("--links-only", action="store_true", help="Scrape links only")
     args = parser.parse_args()
     
     # Broadcast JSON progress to stdout for the Electron/GUI
@@ -29,11 +31,24 @@ def main():
         output_dir=args.output, 
         progress_callback=lambda msg: print(msg, flush=True), 
         max_workers=args.threads,
-        max_retries=args.retries
+        max_retries=args.retries,
+        links_only=args.links_only
     )
     
-    result = scraper.scrape()
-    sys.exit(0 if result.get("success") else 1)
+    try:
+        result = scraper.scrape()
+        # Print JSON result for main.js to intercept if needed
+        print(json.dumps(result), flush=True)
+        sys.exit(0 if result.get("success") else 1)
+    except Exception as exc:
+        import traceback
+        err_out = {
+            "success": False,
+            "error": f"Internal Error: {str(exc)}",
+            "traceback": traceback.format_exc()
+        }
+        print(json.dumps(err_out), flush=True)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

@@ -23,12 +23,13 @@ class BunkrScraperCore:
     _CHUNK_COUNT = 2               # Use exactly 2 parallel segments
     _CHUNK_MIN_SIZE = 1024 * 1024 * 5 # 5 MB minimum for chunking
 
-    def __init__(self, album_url, output_dir="downloads", progress_callback=None, max_workers=1, max_retries=5):
+    def __init__(self, album_url, output_dir="downloads", progress_callback=None, max_workers=1, max_retries=5, links_only=False):
         self.album_url         = album_url
         self.output_dir        = output_dir
         self.progress_callback = progress_callback
         self.max_workers       = max_workers
         self.max_retries       = max_retries
+        self.links_only        = links_only
         self._print_lock       = threading.Lock()
         
         self.cancel_flags      = {}
@@ -87,10 +88,11 @@ class BunkrScraperCore:
         except:
             return False
 
-    def _download_file_chunked(self, cdn_url: str, filepath: Path, filename: str, total: int, fileurl: str) -> str:
-        """Downloads a file in parallel using 2 chunks and staging in a .chunks folder."""
-        temp_dir = filepath.parent / ".chunks" / filename
-        temp_dir.mkdir(parents=True, exist_ok=True)
+    def _download_file_chunked(self, cdn_url: str, final_path: Path, temp_path: Path, filename: str, total: int, fileurl: str) -> str:
+        """Downloads a file in parallel using 2 chunks and staging in a .tmp folder."""
+        # Chunks staging area inside .tmp
+        chunks_tmp_dir = temp_path.parent / f"{filename}.chunks"
+        chunks_tmp_dir.mkdir(parents=True, exist_ok=True)
 
         chunk_size = math.ceil(total / self._CHUNK_COUNT)
         chunk_ranges = []
@@ -104,10 +106,9 @@ class BunkrScraperCore:
         futures = {}
         with ThreadPoolExecutor(max_workers=self._CHUNK_COUNT) as executor:
             for i, (start, end) in enumerate(chunk_ranges):
-                chunk_path = temp_dir / f"part_{i}"
+                chunk_path = chunks_tmp_dir / f"part_{i}"
                 futures[executor.submit(self._download_chunk, cdn_url, start, end, chunk_path, filename)] = i
 
-            # Monitor progress — use f.done() which is True only when actually finished
             start_time = time.time()
             last_pct = -1
             while not all(f.done() for f in futures):
@@ -115,8 +116,8 @@ class BunkrScraperCore:
                     executor.shutdown(wait=False, cancel_futures=True)
                     return "skipped"
 
-                downloaded = sum(p.stat().st_size for p in temp_dir.glob("part_*") if p.exists())
-                pct = min(int(downloaded / total * 100), 99)  # Cap at 99 until merge confirms
+                downloaded = sum(p.stat().st_size for p in chunks_tmp_dir.glob("part_*") if p.exists())
+                pct = min(int(downloaded / total * 100), 99)
                 if (pct - last_pct) >= 2:
                     elapsed = time.time() - start_time
                     speed   = downloaded / elapsed if elapsed > 0 else 0
@@ -126,56 +127,47 @@ class BunkrScraperCore:
                     last_pct = pct
                 time.sleep(0.3)
 
-            # All futures are done — check every one succeeded
             if not all(f.result() for f in futures):
                 return "error"
 
-        # Validate each chunk exists and has data before merging
         expected_sizes = [(end - start + 1) for start, end in chunk_ranges]
         for i, expected in enumerate(expected_sizes):
-            chunk_path = temp_dir / f"part_{i}"
-            if not chunk_path.exists():
-                self._safe_print(f"    ✗ Missing chunk part_{i} for {filename}")
-                return "error"
-            actual = chunk_path.stat().st_size
-            if actual != expected:
-                self._safe_print(f"    ✗ Chunk part_{i} size mismatch: got {actual}, expected {expected}")
-                return "error"
+            chunk_path = chunks_tmp_dir / f"part_{i}"
+            if not chunk_path.exists(): return "error"
+            if chunk_path.stat().st_size != expected: return "error"
 
-        # Merge chunks via streaming copy (no full-file RAM load)
+        # Merge chunks into temp_path
         try:
-            with open(filepath, "wb") as final_f:
+            with open(temp_path, "wb") as final_f:
                 for i in range(self._CHUNK_COUNT):
-                    chunk_path = temp_dir / f"part_{i}"
+                    chunk_path = chunks_tmp_dir / f"part_{i}"
                     with open(chunk_path, "rb") as part_f:
                         shutil.copyfileobj(part_f, final_f)
                     chunk_path.unlink()
-            temp_dir.rmdir()
-            try:
-                (filepath.parent / ".chunks").rmdir()
-            except OSError:
-                pass
+            shutil.rmtree(chunks_tmp_dir, ignore_errors=True)
 
-            # Final size sanity check
-            merged_size = filepath.stat().st_size
+            # Final size sanity check on temp_path
+            merged_size = temp_path.stat().st_size
             if merged_size != total:
-                self._safe_print(f"    ✗ Merged size mismatch: got {merged_size}, expected {total}")
-                filepath.unlink(missing_ok=True)
+                temp_path.unlink(missing_ok=True)
                 return "error"
+
+            # SUCCESS: Move to final location
+            shutil.move(str(temp_path), str(final_path))
 
             self._emit("file_progress", f"Downloading {filename}",
                        filename=filename, percent=100, eta=0, speed=0)
             return "ok"
         except Exception as e:
             self._safe_print(f"    ✗ Merge error: {e}")
-            filepath.unlink(missing_ok=True)
+            temp_path.unlink(missing_ok=True)
             return "error"
 
-    def _perform_streaming_download(self, r, filepath: Path, filename: str, total: int) -> str:
-        """Helper to execute a non-chunked, sequential stream download."""
+    def _perform_streaming_download(self, r, final_path: Path, temp_path: Path, filename: str, total: int) -> str:
+        """Helper to execute a non-chunked, sequential stream download using a temp path."""
         try:
             desc = f"  {filename[:40]:<40}"
-            with get_progress_bar(total, desc, disable=bool(self.progress_callback)) as bar, open(filepath, "wb") as fh:
+            with get_progress_bar(total, desc, disable=bool(self.progress_callback)) as bar, open(temp_path, "wb") as fh:
                 downloaded = 0
                 start = time.time()
                 last_pct = -1
@@ -201,17 +193,31 @@ class BunkrScraperCore:
             if self.cancel_flags.get(filename, False):
                 return "skipped"
 
-            if filepath.stat().st_size < self._MIN_VALID_BYTES:
-                filepath.unlink(missing_ok=True)
+            # Final verification
+            actual_size = temp_path.stat().st_size
+            if total > 0 and actual_size != total:
+                temp_path.unlink(missing_ok=True)
+                return "error"
+
+            if actual_size < self._MIN_VALID_BYTES:
+                temp_path.unlink(missing_ok=True)
                 return "too_small"
 
+            # SUCCESS: Move to final location
+            shutil.move(str(temp_path), str(final_path))
             return "ok"
         except Exception as e:
             self._safe_print(f"    ✗ stream error: {e}")
+            temp_path.unlink(missing_ok=True)
             return "error"
 
     def _download_file(self, cdn_url: str, filepath: Path, filename: str, fileurl: str = None) -> str:
-        """Download logic with automatic selection between chunked and streaming, now with 5 retries."""
+        """Download logic with .tmp staging, size verification, and selection between chunked and streaming."""
+        # 1. Setup hidden .tmp dir for staging
+        tmp_dir = filepath.parent / ".tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        temp_path = tmp_dir / f"{filename}.part"
+
         self._emit("file_start", f"Downloading {filename}", filename=filename, fileurl=fileurl)
         dl_headers = {**self.session.headers, "Referer": "https://get.bunkrr.su/"}
 
@@ -220,7 +226,6 @@ class BunkrScraperCore:
                 return "skipped"
 
             if attempt > 1:
-                # Exponential backoff (2, 4, 8, 16s...)
                 wait_time = 2 ** attempt
                 self._safe_print(f"    ↻ Retry {attempt}/{self.max_retries} for {filename} after {wait_time}s...")
                 self._emit("file_progress", f"Retrying ({attempt}/{self.max_retries})...", 
@@ -228,32 +233,30 @@ class BunkrScraperCore:
                 time.sleep(wait_time)
 
             try:
-                # Cleanup partial files before retry
-                if filepath.exists(): filepath.unlink()
-                chunk_dir = filepath.parent / ".chunks" / filename
-                if chunk_dir.exists(): shutil.rmtree(chunk_dir, ignore_errors=True)
-
+                # Cleanup partial files before attempt
+                if temp_path.exists(): temp_path.unlink()
+                
                 with requests.get(cdn_url, headers=dl_headers, stream=True, timeout=60) as r:
                     r.raise_for_status()
                     
                     content_type = r.headers.get("content-type", "")
                     if "text/html" in content_type:
-                        # This usually means a maintenance page or cloudflare block
                         if attempt == self.max_retries:
                             self._emit("file_error", f"Maintenance: {filename}", filename=filename, reason="maintenance")
                             return "maintenance"
                         continue
 
                     total = int(r.headers.get("content-length", 0))
+                    
+                    # IMPORTANT: Verification only check the FINAL location
                     if filepath.exists() and total > 0 and filepath.stat().st_size == total:
                         return "already_exists"
 
-                    # Only use chunked on the first attempt if valid
                     if attempt == 1 and total >= self._CHUNK_MIN_SIZE:
                         r.close() 
-                        result = self._download_file_chunked(cdn_url, filepath, filename, total, fileurl)
+                        result = self._download_file_chunked(cdn_url, filepath, temp_path, filename, total, fileurl)
                     else:
-                        result = self._perform_streaming_download(r, filepath, filename, total)
+                        result = self._perform_streaming_download(r, filepath, temp_path, filename, total)
                     
                     if result == "too_small":
                         if attempt == self.max_retries:
@@ -263,13 +266,11 @@ class BunkrScraperCore:
 
                     if result == "ok" or result == "already_exists":
                         return result
-                    
-                    # If result is "error", loop continues to next attempt
 
             except Exception as exc:
                 self._safe_print(f"    ✗ Attempt {attempt} failed: {exc}")
                 if attempt == self.max_retries:
-                    filepath.unlink(missing_ok=True)
+                    temp_path.unlink(missing_ok=True)
                     self._emit("file_error", f"Failed after {attempt} attempts: {filename}", 
                                filename=filename, error=str(exc))
                     return "error"
@@ -291,7 +292,9 @@ class BunkrScraperCore:
         soup       = BeautifulSoup(r.content, "html.parser")
         album_name = get_album_name(soup, self.album_url)
         album_dir  = Path(self.output_dir) / album_name
-        album_dir.mkdir(parents=True, exist_ok=True)
+        
+        if not self.links_only:
+            album_dir.mkdir(parents=True, exist_ok=True)
         
         self._emit("album_info", "Album Discovered", name=album_name)
 
@@ -348,11 +351,15 @@ class BunkrScraperCore:
             if idx > 1:
                 overall_eta = (time.time() - overall_start) / (idx - 1) * (total - idx + 1)
 
-            result = self._download_file(cdn_url, filepath, filename, fileurl=file_url)
+            if self.links_only:
+                self._emit("file_complete", f"Link Resolved: {filename}", filename=filename, overall_eta=int(overall_eta), fileurl=cdn_url)
+                return "ok"
+
+            result = self._download_file(cdn_url, filepath, filename, fileurl=cdn_url)
             if result == "ok":
-                self._emit("file_complete", f"Done: {filename}", filename=filename, overall_eta=int(overall_eta), fileurl=file_url)
+                self._emit("file_complete", f"Done: {filename}", filename=filename, overall_eta=int(overall_eta), fileurl=cdn_url)
             elif result == "already_exists":
-                self._emit("file_complete", f"Exists: {filename}", filename=filename, fileurl=file_url)
+                self._emit("file_complete", f"Exists: {filename}", filename=filename, fileurl=cdn_url)
             return result
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:

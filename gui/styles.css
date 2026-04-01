@@ -27,6 +27,7 @@
     --radius-md: 8px;
     --shadow-main: 0 8px 32px rgba(0, 0, 0, 0.6);
     --glow-cyan: 0 0 15px rgba(0, 242, 254, 0.3);
+    --neon-purple-gradient: linear-gradient(135deg, #a855f7 0%, #d946ef 100%);
 }
 
 * {
@@ -130,6 +131,18 @@ body {
     flex-direction: column;
     overflow: hidden;
     position: relative;
+}
+
+.view-panel {
+    display: none;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+}
+
+.view-panel.active {
+    display: flex;
 }
 
 /* Top Bar Styling */
@@ -557,6 +570,32 @@ body {
     color: var(--neon-cyan);
 }
 
+.row-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 16px;
+}
+
+.copy-link-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.copy-link-btn:hover {
+    background: rgba(0, 242, 254, 0.1);
+    color: var(--neon-cyan);
+    transform: scale(1.1);
+}
+
 .skip-btn {
     background: transparent;
     border: none;
@@ -743,6 +782,38 @@ body {
 .row-progress-info .speed {
     color: var(--neon-purple);
     font-weight: 700;
+}
+
+/* Grabber Specifics */
+.grabbed-link-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--border-dim);
+    background: rgba(255, 255, 255, 0.01);
+    transition: all 0.2s ease;
+}
+
+.grabbed-link-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.grabbed-url {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    margin-right: 20px;
+}
+
+.grabber-results h2 {
+    font-size: 1.2rem;
+    font-weight: 700;
+    margin-bottom: 2px;
 }
 
 /* Empty State */
