@@ -353,9 +353,9 @@ body {
 /* Stat Section */
 .hero-stats {
     display: flex;
-    padding: 40px;
+    padding: 24px;
     align-items: center;
-    gap: 60px;
+    gap: 40px;
 }
 
 .card {
@@ -368,8 +368,9 @@ body {
 /* Circular Progress */
 .circular-progress-container {
     position: relative;
-    width: 220px;
-    height: 220px;
+    width: 140px;
+    height: 140px;
+    flex-shrink: 0;
 }
 
 .circular-progress {
@@ -406,7 +407,7 @@ body {
 }
 
 .progress-text span {
-    font-size: 3.5rem;
+    font-size: 2rem;
     font-weight: 800;
     line-height: 1;
     font-family: 'JetBrains Mono', monospace;
@@ -426,12 +427,12 @@ body {
 .details-grid {
     flex: 1;
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 24px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
 }
 
 .stat-tile {
-    padding: 24px;
+    padding: 16px;
     background: rgba(255, 255, 255, 0.02);
     border-radius: 12px;
     border: 1px solid var(--border-dim);
@@ -449,7 +450,7 @@ body {
 }
 
 .stat-tile div, .val-group {
-    font-size: 2rem;
+    font-size: 1.25rem;
     font-weight: 800;
     font-family: 'JetBrains Mono', monospace;
 }
@@ -496,6 +497,15 @@ body {
     margin-right: 8px;
     letter-spacing: 0.05em;
 }
+.queue-url {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    user-select: text;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .queue-info {
     display: flex;
     align-items: center;
@@ -529,7 +539,22 @@ body {
     transition: 0.2s;
 }
 .queue-actions button:hover {
+    color: var(--text-primary);
+}
+.queue-actions button.delete-btn:hover {
     color: var(--neon-red);
+}
+.copy-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: 0.2s;
+    display: flex;
+    align-items: center;
+}
+.copy-btn:hover {
+    color: var(--neon-cyan);
 }
 
 .skip-btn {

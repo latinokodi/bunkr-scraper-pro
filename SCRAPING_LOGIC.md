@@ -31,7 +31,8 @@ The album page contains a grid of thumbnails. Each thumbnail is an `<a>` tag poi
 1.  **Pagination Crawl**: The scraper now detects `?page=X` links and traverses them automatically to find all files in large albums (>100 files).
 2.  **Dynamic Grid Detection**: If the static HTML doesn't show the grid (common in "Advanced Mode" or during server migrations), the scraper applies a **Regex Fallback**. It searches for file slugs inside JSON blocks or script tags:
     -   Matches `"/f/([a-zA-Z0-9]+)"` across the entire HTML body.
-    -   Deduplicates results to ensuring an accurate count.
+    -   Also looks for `slug:\s*"([a-zA-Z0-9]+)"` pattern as alternative.
+    -   Deduplicates results to ensure an accurate count.
 
 ---
 
@@ -47,6 +48,9 @@ Each file detail page contains a **Download** button pointing to the intermediat
 ```
 
 **Scraper action:** GET the file page, find the first `<a>` whose `href` contains `get.bunkrr.su`. This provides the numeric file ID needed for the API call.
+Additional fallbacks exist for when the primary selector fails:
+- Checks for elements with `btn-main` class
+- Looks for links with text matching "download"
 
 ---
 
@@ -93,6 +97,13 @@ The decrypted URL points to the real file server (e.g., `*.scdn.st/*.mp4`).
 
 **Scraper action:** Download the file using the header `Referer: https://get.bunkrr.su/`. This is critical; without it, Bunkr servers return a 403 Forbidden error.
 
+#### Parallel Download Strategy
+The scraper implements intelligent download strategies:
+- **Large files** (>5MB): Downloaded in parallel chunks (2 segments) for faster transfer
+- **Small files**: Downloaded sequentially
+- **Fallback mechanism**: If chunked download fails, retries with standard streaming
+- **Validation**: Files under 50KB are rejected as likely error pages/maintenance responses
+
 ---
 
 ## 🧩 Modular Structure
@@ -101,8 +112,8 @@ The scraper has been refactored into a **clean, modular package** in `bunkr_core
 
 | Module | Responsibility |
 |:---|:---|
-| [`scraper_engine.py`](file:///f:/PyApps/bunkrscr/bunkr_core/scraper_engine.py) | **Orchestrator**: Thread pool, session management, and `scrape()` loop. |
-| [`site_parser.py`](file:///f:/PyApps/bunkrscr/bunkr_core/site_parser.py) | **Parser**: Logic for extracting links from albums and individual file pages. |
+| [`scraper_engine.py`](file:///f:/PyApps/bunkrscr/bunkr_core/scraper_engine.py) | **Orchestrator**: Thread pool, session management, and `scrape()` loop. Handles chunked downloads, progress reporting, and cancellation. |
+| [`site_parser.py`](file:///f:/PyApps/bunkrscr/bunkr_core/site_parser.py) | **Parser**: Logic for extracting links from albums and individual file pages. Includes fallback mechanisms. |
 | [`crypto.py`](file:///f:/PyApps/bunkrscr/bunkr_core/crypto.py) | **Crypto**: Reverse-engineered XOR decryption functionality. |
 | [`ui_helpers.py`](file:///f:/PyApps/bunkrscr/bunkr_core/ui_helpers.py) | **UI**: Console progress bars (tqdm/manual) and status emitters. |
 | [`utils.py`](file:///f:/PyApps/bunkrscr/bunkr_core/utils.py) | **Utils**: Filename sanitization and OS-level helper functions. |

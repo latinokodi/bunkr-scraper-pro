@@ -197,6 +197,7 @@ function startPythonScraper(task, isPriority = false) {
     const args = [SCRAPER, url];
     if (outDir) args.push(outDir);
     if (maxWorkers) args.push('--threads', maxWorkers.toString());
+    args.push('--retries', '5');
 
     console.log(`[main] Spawning [${isPriority ? 'PRIORITY' : 'STANDARD'}] python: ${PYTHON_EXE} ${args.join(' ')}`);
 

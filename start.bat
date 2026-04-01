@@ -5,7 +5,7 @@ setlocal
 cd /d "%~dp0"
 
 echo ============================================
-echo   Bunkr Scraper – Launcher
+echo   Bunkr Scraper - Launcher
 echo ============================================
 echo.
 

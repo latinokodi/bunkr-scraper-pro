@@ -31,6 +31,7 @@ const elements = {
     messageContainer:   document.getElementById('messageContainer'),
     queueSection:       document.getElementById('queueSection'),
     queueList:          document.getElementById('queueList'),
+    copyAllQueueBtn:    document.getElementById('copyAllQueueBtn'),
     currentAlbumTitle:  document.getElementById('currentAlbumTitle'),
 };
 
@@ -40,7 +41,8 @@ const icons = {
     success:     '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>',
     error:       '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>',
     maintenance: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>',
-    stop:        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><rect x="6" y="6" width="12" height="12"></rect></svg>'
+    stop:        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><rect x="6" y="6" width="12" height="12"></rect></svg>',
+    copy:        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>'
 };
 
 // ── Initialization ────────────────────────────────────────────────────────────
@@ -138,12 +140,15 @@ function renderQueue(q) {
                 <span class="queue-url" title="${task.url}">${task.url}</span>
             </div>
             <div class="queue-actions">
+                <button class="copy-btn" onclick="copyToClipboard('${task.url}')" title="Copy URL">
+                    ${icons.copy}
+                </button>
                 ${!task.isPriority ? `
                 <button class="run-now-btn" onclick="window.electronAPI.startTaskNow('${task.id}')" title="Start Now (Priority)">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                 </button>
                 ` : ''}
-                <button onclick="window.electronAPI.removeFromQueue('${task.id}')" title="Remove from Queue">
+                <button class="delete-btn" onclick="window.electronAPI.removeFromQueue('${task.id}')" title="Remove from Queue">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
             </div>
@@ -213,6 +218,7 @@ elements.urlInput.addEventListener('focus', () => elements.urlInput.select());
 elements.downloadBtn.addEventListener('click', () => handleDownload());
 elements.stopBtn.addEventListener('click', handleStopAll);
 elements.browseBtn.addEventListener('click', handleBrowse);
+elements.copyAllQueueBtn.addEventListener('click', handleCopyAllQueue);
 loadPersistentPath();
 
 elements.urlInput.addEventListener('keypress', (e) => {
@@ -291,6 +297,14 @@ function handleDownload() {
     elements.urlInput.value = '';
 }
 
+async function handleCopyAllQueue() {
+    const q = await window.electronAPI.getQueue();
+    if (!q || q.length === 0) return;
+    
+    const urls = q.map(task => task.url).join('\n');
+    copyToClipboard(urls, 'All queue links copied');
+}
+
 // ── Progress Circle ───────────────────────────────────────────────────────────
 function updateCircle(percent) {
     elements.circularPercent.textContent = `${percent}%`;
@@ -340,7 +354,7 @@ window.onPythonProgress = function (data) {
     }
 
     if (data.type === 'file_progress') {
-        updateTableRowProgress(data.filename, data.percent, data.eta, data.speed);
+        updateTableRowProgress(data.filename, data.percent, data.eta, data.speed, data.attempt);
     }
 
     if (data.type === 'file_complete') {
@@ -403,9 +417,18 @@ function addTableRow(filename, fileurl = '', taskId = '') {
     elements.filesList.prepend(row);
 }
 
-function updateTableRowProgress(filename, percent, eta, speed) {
+function updateTableRowProgress(filename, percent, eta, speed, attempt = 1) {
     const row = document.querySelector(`[data-filename="${filename}"]`);
     if (!row) return;
+
+    const badge = row.querySelector('.status-badge');
+    if (attempt > 1) {
+        badge.className = 'status-badge maintenance';
+        badge.innerHTML = `${icons.maintenance} Retry ${attempt}/5`;
+    } else {
+        badge.className = 'status-badge downloading';
+        badge.innerHTML = `${icons.downloading} Active`;
+    }
 
     const fill = row.querySelector('.row-progress-fill');
     const pct  = row.querySelector('.pct');
@@ -478,6 +501,14 @@ function formatSpeed(bytes) {
     const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
     const i = Math.floor(Math.log(bytes) / Math.log(1024));
     return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
+
+function copyToClipboard(text, successMsg = 'URL copied to clipboard') {
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('success', 'Copied!', successMsg);
+    }).catch(err => {
+        showToast('error', 'Copy Failed', 'Could not access clipboard');
+    });
 }
 
 function showToast(type, title, text) {

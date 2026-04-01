@@ -27,6 +27,9 @@ A desktop app to download media from Bunkr albums.
 - **Retry failed files** — Re-queue failed downloads from UI
 - **Pagination handling** — Crawls `?page=X` links for albums >100 files
 - **Validation** — Rejects files <50KB (likely error pages)
+- **Parallel downloads** — Support for multiple concurrent file downloads
+- **Chunked downloads** — Segment-based downloading for large files
+- **Intelligent fallback** — Multiple methods to detect file links when HTML changes
 
 ## Data Flow
 
@@ -63,6 +66,6 @@ bunkrscr/
 
 ## Dependencies
 
-**Python:** `requests`, `beautifulsoup4`, `tqdm`
+**Python:** `requests`, `beautifulsoup4`, `tqdm`, `pywebview`
 
 **Node.js:** Electron (see `electron/package.json`)

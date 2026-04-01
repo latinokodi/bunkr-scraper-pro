@@ -20,6 +20,7 @@ def main():
     parser.add_argument("url", help="Bunkr album URL or file URL")
     parser.add_argument("output", nargs="?", default="downloads", help="Output directory")
     parser.add_argument("--threads", type=int, default=1, help="Max parallel downloads")
+    parser.add_argument("--retries", type=int, default=5, help="Max retries per file")
     args = parser.parse_args()
     
     # Broadcast JSON progress to stdout for the Electron/GUI
@@ -27,7 +28,8 @@ def main():
         args.url, 
         output_dir=args.output, 
         progress_callback=lambda msg: print(msg, flush=True), 
-        max_workers=args.threads
+        max_workers=args.threads,
+        max_retries=args.retries
     )
     
     result = scraper.scrape()
