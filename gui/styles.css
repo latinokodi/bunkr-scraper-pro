@@ -427,8 +427,8 @@ body {
 .details-grid {
     flex: 1;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
 }
 
 .stat-tile {

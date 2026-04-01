@@ -12,8 +12,8 @@ const SYS_PY     = 'python';
 const PYTHON_EXE = fs.existsSync(VENV_PY) ? VENV_PY : SYS_PY;
 const SCRAPER    = path.join(ROOT, 'scraper_core.py');
 
-const MAX_STANDARD_CONCURRENT = 3;
-const MAX_PRIORITY_CONCURRENT = 3;
+const MAX_STANDARD_CONCURRENT = 10;
+const MAX_PRIORITY_CONCURRENT = 10;
 let activeProcesses = new Map();  // Map<id, { process, task, files: Set<filename>, isPriority: boolean }>
 let downloadQueue = [];
 let QUEUE_FILE = null;

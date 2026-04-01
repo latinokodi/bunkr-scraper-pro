@@ -9,7 +9,7 @@
 const state = {
     activeDownloads: new Map(),  // Map<taskId, { url, albumName, stats, files }>
     selectedFolder: null,
-    concurrency: 3,
+    concurrency: 10,
 };
 
 // DOM Elements
@@ -32,6 +32,7 @@ const elements = {
     queueSection:       document.getElementById('queueSection'),
     queueList:          document.getElementById('queueList'),
     copyAllQueueBtn:    document.getElementById('copyAllQueueBtn'),
+    totalSpeed:         document.getElementById('totalSpeed'),
     currentAlbumTitle:  document.getElementById('currentAlbumTitle'),
 };
 
@@ -323,13 +324,41 @@ function resetDashboard() {
 function updateStatsDisplay() {
     let total = 0, downloaded = 0, failed = 0;
     for (const download of state.activeDownloads.values()) {
-        total += download.stats.total;
-        downloaded += download.stats.downloaded;
-        failed += download.stats.failed;
+        total += download.stats.total || 0;
+        downloaded += download.stats.downloaded || 0;
+        failed += download.stats.failed || 0;
     }
+    
+    // Update labels
     elements.totalFiles.textContent = total;
     elements.downloadedFiles.textContent = downloaded;
     elements.failedFiles.textContent = failed;
+
+    // Update Progress Circle (Global)
+    const totalDone = downloaded + failed;
+    if (total > 0) {
+        const pct = Math.round((totalDone / total) * 100);
+        updateCircle(pct);
+    } else {
+        updateCircle(0);
+    }
+
+    // Update Total Speed (Aggregated from active rows)
+    let aggregateSpeed = 0;
+    document.querySelectorAll('.table-row .speed').forEach(el => {
+        const text = el.textContent || '';
+        // If row is not 'downloading' status anymore, speed won't be there or will be 0
+        if (text && text.includes('/s')) {
+            const val = parseFloat(text);
+            const unit = text.split(' ')[1] || 'B/s';
+            let bytes = val;
+            if (unit.startsWith('K')) bytes *= 1024;
+            else if (unit.startsWith('M')) bytes *= 1024 * 1024;
+            else if (unit.startsWith('G')) bytes *= 1024 * 1024 * 1024;
+            aggregateSpeed += bytes;
+        }
+    });
+    elements.totalSpeed.textContent = formatSpeed(aggregateSpeed);
 }
 
 // ── Python Progress Handler ───────────────────────────────────────────────────
@@ -355,16 +384,13 @@ window.onPythonProgress = function (data) {
 
     if (data.type === 'file_progress') {
         updateTableRowProgress(data.filename, data.percent, data.eta, data.speed, data.attempt);
+        updateStatsDisplay(); // Keep Total Speed in sync
     }
 
     if (data.type === 'file_complete') {
         download.stats.downloaded++;
         updateStatsDisplay();
         updateTableRowStatus(data.filename, 'success', data.fileurl);
-
-        const totalDone = download.stats.downloaded + download.stats.failed;
-        const total = download.stats.total > 0 ? download.stats.total : 1;
-        updateCircle(Math.round((totalDone / total) * 100));
 
         if (data.overall_eta) {
             elements.etaValue.textContent = formatSecs(data.overall_eta);
@@ -473,6 +499,31 @@ function updateTableRowStatus(filename, status, fileurl = '') {
 
         const skipBtn = row.querySelector('.skip-btn');
         if (skipBtn) skipBtn.remove();
+
+        // ── Auto Remove Finished / Failed Downloads ──
+        if (status === 'success' || status === 'error' || status === 'maintenance') {
+            const delay = status === 'success' ? 3000 : 5000; // 3s for success, 5s for failures
+            setTimeout(() => {
+                if (row.parentNode) {
+                    row.style.opacity = '0';
+                    row.style.transform = 'translateY(-10px)';
+                    row.style.transition = 'all 0.4s ease';
+                    
+                    setTimeout(() => {
+                        row.remove();
+                        // Re-add empty state if last item was removed
+                        if (elements.filesList.children.length === 0) {
+                            elements.filesList.innerHTML = `
+                                <div class="empty-state">
+                                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                    <p>Queue is empty. Enter an album link above to start.</p>
+                                </div>
+                            `;
+                        }
+                    }, 400);
+                }
+            }, delay); 
+        }
 
         const retryUrl = row.dataset.fileurl;
         if ((status === 'error' || status === 'skipped') && retryUrl) {
