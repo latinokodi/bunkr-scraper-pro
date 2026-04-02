@@ -12,9 +12,13 @@ const SYS_PY     = 'python';
 const PYTHON_EXE = fs.existsSync(VENV_PY) ? VENV_PY : SYS_PY;
 const SCRAPER    = path.join(ROOT, 'scraper_core.py');
 
-const MAX_STANDARD_CONCURRENT = 1;
+const MAX_STANDARD_CONCURRENT = 5;
 const MAX_PRIORITY_CONCURRENT = 100; // Effectively unlimited for overrides
-let activeProcesses = new Map();  // Map<id, { process, task, files: Set<filename>, isPriority: boolean }>
+const MAX_FILE_SLOTS         = 10;
+
+let activeFileSlots         = 0;
+let slotQueue               = []; // Array of { taskId, filename }
+let activeProcesses         = new Map();  // Map<id, { process, task, files: Set<filename>, activeFiles: Set<filename>, isPriority: boolean }>
 let downloadQueue = [];
 let QUEUE_FILE = null;
 let mainWindow;
@@ -225,15 +229,54 @@ ipcMain.on('start-task-now', (_event, id) => {
 });
 
 ipcMain.on('skip-file', (_event, filename) => {
-    for (const [, entry] of activeProcesses) {
+    for (const [id, entry] of activeProcesses) {
         if (entry.files.has(filename) && entry.process.stdin) {
             console.log(`[main] Passing skip request for: ${filename}`);
             const payload = JSON.stringify({ action: "skip", filename: filename });
             entry.process.stdin.write(payload + "\n");
+            
+            // If it was waiting for a slot, remove it from queue
+            slotQueue = slotQueue.filter(q => q.filename !== filename);
+            // If it was active, release its slot will happen via python's release_slot emission
             break;
         }
     }
 });
+
+// ── Slot Manager ─────────────────────────────────────────────────────────────
+function requestSlot(taskId, filename) {
+    if (activeFileSlots < MAX_FILE_SLOTS) {
+        activeFileSlots++;
+        grantSlot(taskId, filename);
+    } else {
+        console.log(`[slots] Queuing slot request for ${filename} (Total active: ${activeFileSlots})`);
+        slotQueue.push({ taskId, filename });
+    }
+}
+
+function releaseSlot(taskId, filename) {
+    const entry = activeProcesses.get(taskId);
+    if (entry) entry.activeFiles.delete(filename);
+
+    if (activeFileSlots > 0) activeFileSlots--;
+    
+    console.log(`[slots] Released slot for ${filename}. Remaining active: ${activeFileSlots}`);
+    
+    if (slotQueue.length > 0) {
+        const next = slotQueue.shift();
+        activeFileSlots++;
+        grantSlot(next.taskId, next.filename);
+    }
+}
+
+function grantSlot(taskId, filename) {
+    const entry = activeProcesses.get(taskId);
+    if (entry && entry.process && entry.process.stdin) {
+        console.log(`[slots] Granting slot to ${taskId} for ${filename}`);
+        entry.activeFiles.add(filename);
+        entry.process.stdin.write(JSON.stringify({ action: "grant_slot", filename: filename }) + "\n");
+    }
+}
 
 // ── Python Process Management ──────────────────────────────────────────────────
 function startPythonScraper(task, isPriority = false) {
@@ -242,7 +285,7 @@ function startPythonScraper(task, isPriority = false) {
     const args = [SCRAPER, url];
     if (outDir) args.push(outDir);
     if (maxWorkers) args.push('--threads', maxWorkers.toString());
-    args.push('--retries', '10');
+    args.push('--retries', '5');
     if (task.isLinksOnly) args.push('--links-only');
 
     console.log(`[main] Spawning [${isPriority ? 'PRIORITY' : (task.isLinksOnly ? 'GRABBER' : 'STANDARD')}] python: ${PYTHON_EXE} ${args.join(' ')}`);
@@ -256,6 +299,7 @@ function startPythonScraper(task, isPriority = false) {
         process: child,
         task: task,
         files: new Set(),
+        activeFiles: new Set(), // Files currently holding an aria2 slot
         albumName: null,
         isPriority: isPriority
     };
@@ -293,6 +337,14 @@ function startPythonScraper(task, isPriority = false) {
                         entry.files.add(parsed.filename);
                     }
 
+                    if (parsed.type === 'request_slot' && parsed.filename) {
+                        requestSlot(id, parsed.filename);
+                    }
+
+                    if (parsed.type === 'release_slot' && parsed.filename) {
+                        releaseSlot(id, parsed.filename);
+                    }
+
                     if (mainWindow && !mainWindow.isDestroyed()) {
                         mainWindow.webContents.send('progress', parsed);
                     }
@@ -309,6 +361,13 @@ function startPythonScraper(task, isPriority = false) {
         console.log(`[main] Python ${id} exited with code ${code}`);
         
         if (isShuttingDown) return; // Prevent state removal during app shutdown
+
+        // Clean up any slots this process might have been holding or requesting
+        const entry = activeProcesses.get(id);
+        if (entry) {
+            entry.activeFiles.forEach(fname => releaseSlot(id, fname));
+            slotQueue = slotQueue.filter(q => q.taskId !== id);
+        }
 
         activeProcesses.delete(id);
 

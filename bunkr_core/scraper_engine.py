@@ -33,6 +33,7 @@ class BunkrScraperCore:
         self._print_lock       = threading.Lock()
         
         self.cancel_flags      = {}
+        self.slot_events       = {} # filename -> threading.Event
         if self.progress_callback:
             self._stdin_thread = threading.Thread(target=self._stdin_listener, daemon=True)
             self._stdin_thread.start()
@@ -57,6 +58,10 @@ class BunkrScraperCore:
                 data = json.loads(line)
                 if data.get("action") == "skip" and "filename" in data:
                     self.cancel_flags[data["filename"]] = True
+                elif data.get("action") == "grant_slot" and "filename" in data:
+                    fname = data["filename"]
+                    if fname in self.slot_events:
+                        self.slot_events[fname].set()
             except:
                 pass
 
@@ -324,7 +329,23 @@ class BunkrScraperCore:
                         self._emit("file_complete", f"Link Resolved: {filename}", filename=filename, overall_eta=int(overall_eta), fileurl=cdn_url)
                         return "ok"
 
+                    # ── GLOBAL SLOT HANDSHAKE ──
+                    # Request permission from Electron if it's orchestrating
+                    slot_ev = threading.Event()
+                    self.slot_events[filename] = slot_ev
+                    self._emit("request_slot", f"Waiting for slot: {filename}", filename=filename)
+                    
+                    # Wait for grant (no timeout by default, let Electron manage it)
+                    sig = slot_ev.wait() # Returns True if set
+                    
                     result = self._download_file(cdn_url, filepath, filename, fileurl=cdn_url, attempt=attempt)
+                    
+                    # Release permission
+                    self._emit("release_slot", f"Releasing slot: {filename}", filename=filename)
+                    if filename in self.slot_events:
+                        del self.slot_events[filename]
+                    # ───────────────────────────
+
                     if result == "ok":
                         self._emit("file_complete", f"Done: {filename}", filename=filename, overall_eta=int(overall_eta), fileurl=cdn_url)
                         return "ok"

@@ -27,7 +27,7 @@ class Aria2Manager:
                 "--rpc-listen-all=false",
                 f"--rpc-listen-port={self.port}",
                 "--rpc-max-request-size=2M",
-                "--max-concurrent-downloads=10",
+                "--max-concurrent-downloads=20",
                 "--check-certificate=false",
                 "--daemon=false" # We manage the process ourselves
             ]
