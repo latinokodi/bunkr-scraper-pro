@@ -12,8 +12,8 @@ const SYS_PY     = 'python';
 const PYTHON_EXE = fs.existsSync(VENV_PY) ? VENV_PY : SYS_PY;
 const SCRAPER    = path.join(ROOT, 'scraper_core.py');
 
-const MAX_STANDARD_CONCURRENT = 10;
-const MAX_PRIORITY_CONCURRENT = 10;
+const MAX_STANDARD_CONCURRENT = 1;
+const MAX_PRIORITY_CONCURRENT = 100; // Effectively unlimited for overrides
 let activeProcesses = new Map();  // Map<id, { process, task, files: Set<filename>, isPriority: boolean }>
 let downloadQueue = [];
 let QUEUE_FILE = null;
@@ -52,9 +52,9 @@ function getActiveCount(priorityOnly = false) {
 }
 
 function processQueue() {
-    // 1. Process Priority Tasks (if any in queue marked as priority)
+    // 1. Process Priority Tasks (Manual Overrides)
     const priorityTasks = downloadQueue.filter(t => t.isPriority);
-    while (getActiveCount(true) < MAX_PRIORITY_CONCURRENT && priorityTasks.length > 0) {
+    while (priorityTasks.length > 0) {
         const task = priorityTasks.shift();
         // Remove from main queue
         downloadQueue = downloadQueue.filter(t => t.id !== task.id);
@@ -158,8 +158,46 @@ app.on('window-all-closed', () => {
 ipcMain.handle('get-queue', () => downloadQueue);
 
 ipcMain.handle('get-active-downloads', () => getActiveDownloadInfo());
+ipcMain.handle('cleanup-downloads', async (_event, targetDir) => {
+    if (activeProcesses.size > 0) {
+        return { success: false, error: 'Cannot perform cleanup while downloads are active.' };
+    }
+
+    const outputDir = targetDir || path.join(ROOT, 'downloads');
+    const args = [SCRAPER, '--cleanup', outputDir];
+
+    console.log(`[main] Spawning cleanup: ${PYTHON_EXE} ${args.join(' ')}`);
+
+    return new Promise((resolve) => {
+        const child = spawn(PYTHON_EXE, args, { cwd: ROOT });
+        let output = '';
+        child.stdout.on('data', (data) => {
+            const str = data.toString();
+            output += str;
+        });
+        child.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    // Find the last line that looks like JSON
+                    const lines = output.trim().split('\n');
+                    const lastLine = lines[lines.length - 1];
+                    const result = JSON.parse(lastLine);
+                    resolve(result);
+                } catch (e) {
+                    resolve({ success: true, message: 'Cleanup finished' });
+                }
+            } else {
+                resolve({ success: false, error: `Cleanup failed (code ${code})` });
+            }
+        });
+    });
+});
 
 ipcMain.on('add-to-queue', (_event, task) => {
+    // Defense: If task is a string (URL), wrap it in an object
+    if (typeof task === 'string') {
+        task = { url: task };
+    }
     task.id = task.id || Date.now().toString() + Math.random().toString(36).substr(2, 5);
     // isPriority flag comes from options if provided
     task.isPriority = !!task.isPriority;
@@ -204,7 +242,7 @@ function startPythonScraper(task, isPriority = false) {
     const args = [SCRAPER, url];
     if (outDir) args.push(outDir);
     if (maxWorkers) args.push('--threads', maxWorkers.toString());
-    args.push('--retries', '5');
+    args.push('--retries', '10');
     if (task.isLinksOnly) args.push('--links-only');
 
     console.log(`[main] Spawning [${isPriority ? 'PRIORITY' : (task.isLinksOnly ? 'GRABBER' : 'STANDARD')}] python: ${PYTHON_EXE} ${args.join(' ')}`);

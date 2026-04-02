@@ -15,15 +15,15 @@ from urllib.parse import urljoin, urlparse
 from .ui_helpers import get_progress_bar
 from .utils import sanitize_filename, get_filename_from_url, get_album_name
 from .site_parser import get_file_urls, get_bunkrr_url, get_cdn_url
+from .bin_fetcher import get_aria2_path
+from .aria2_manager import Aria2Manager
 
 class BunkrScraperCore:
     """Core scraper orchestration engine."""
 
     _MIN_VALID_BYTES = 1024 * 50   # 50 KB
-    _CHUNK_COUNT = 2               # Use exactly 2 parallel segments
-    _CHUNK_MIN_SIZE = 1024 * 1024 * 5 # 5 MB minimum for chunking
 
-    def __init__(self, album_url, output_dir="downloads", progress_callback=None, max_workers=1, max_retries=5, links_only=False):
+    def __init__(self, album_url, output_dir="downloads", progress_callback=None, max_workers=1, max_retries=10, links_only=False):
         self.album_url         = album_url
         self.output_dir        = output_dir
         self.progress_callback = progress_callback
@@ -36,6 +36,11 @@ class BunkrScraperCore:
         if self.progress_callback:
             self._stdin_thread = threading.Thread(target=self._stdin_listener, daemon=True)
             self._stdin_thread.start()
+
+        # Aria2 downloader state
+        self.aria2_mgr         = None
+        self.aria2_api         = None
+        self._aria2_lock      = threading.Lock()
 
         self.session = requests.Session()
         self.session.headers.update({
@@ -61,6 +66,25 @@ class BunkrScraperCore:
             kwargs.setdefault('flush', True)
             print(*args, **kwargs)
 
+    def _ensure_aria2(self):
+        """Ensures the aria2c daemon is running and API is connected."""
+        with self._aria2_lock:
+            if self.aria2_api:
+                return True
+            
+            try:
+                binary = get_aria2_path()
+                if not binary:
+                    self._emit("status", "Error: aria2c.exe missing. Please check your bin folder.")
+                    return False
+                
+                self.aria2_mgr = Aria2Manager(binary)
+                self.aria2_api = self.aria2_mgr.start_daemon() # Returns api instance
+                return True
+            except Exception as e:
+                self._emit("status", f"Error initializing aria2: {e}")
+                return False
+
     def _emit(self, progress_type, message, **kw):
         """Send progress events to the callback (typically JSON for Electron)."""
         if self.progress_callback:
@@ -71,211 +95,123 @@ class BunkrScraperCore:
                     **kw
                 }))
 
-    def _download_chunk(self, cdn_url, start_byte, end_byte, chunk_path, filename):
-        """Worker function for downloading a single byte range."""
-        headers = {**self.session.headers, "Referer": "https://get.bunkrr.su/", "Range": f"bytes={start_byte}-{end_byte}"}
-        try:
-            with requests.get(cdn_url, headers=headers, stream=True, timeout=30) as r:
-                if r.status_code not in (200, 206):
+    def _check_url_exists(self, url: str) -> bool:
+        """Verify if the CDN URL is actually reachable and not a 404 with retries for transient errors."""
+        for attempt in range(1, 4):
+            try:
+                # Use GET with stream=True to check status without downloading content.
+                # Some CDNs block HEAD or return 405/403 for it.
+                r = self.session.get(url, timeout=15, stream=True)
+                
+                # If we get a valid response (2xx), it exists
+                if r.status_code < 400:
+                    return True
+                
+                # If it's a 404 (Not Found), it's likely permanently missing
+                if r.status_code == 404:
                     return False
-                with open(chunk_path, "wb") as f:
-                    for chunk in r.iter_content(chunk_size=65536):
-                        if self.cancel_flags.get(filename, False):
-                            return False
-                        if chunk:
-                            f.write(chunk)
-            return True
-        except:
-            return False
+                
+                # For other errors (429, 5xx), retry after a short delay
+                if r.status_code >= 400:
+                    if attempt < 3:
+                        time.sleep(1 * attempt)
+                        continue
+                    return False
+            except Exception:
+                if attempt < 3:
+                    time.sleep(1 * attempt)
+                    continue
+                return False
+        return False
 
-    def _download_file_chunked(self, cdn_url: str, final_path: Path, temp_path: Path, filename: str, total: int, fileurl: str) -> str:
-        """Downloads a file in parallel using 2 chunks and staging in a .tmp folder."""
-        # Chunks staging area inside .tmp
-        chunks_tmp_dir = temp_path.parent / f"{filename}.chunks"
-        chunks_tmp_dir.mkdir(parents=True, exist_ok=True)
 
-        chunk_size = math.ceil(total / self._CHUNK_COUNT)
-        chunk_ranges = []
-        for i in range(self._CHUNK_COUNT):
-            start = i * chunk_size
-            end   = min(start + chunk_size - 1, total - 1)
-            chunk_ranges.append((start, end))
-
-        self._safe_print(f"    ⚡ Chunked Download (2 parts): {filename}")
-
-        futures = {}
-        with ThreadPoolExecutor(max_workers=self._CHUNK_COUNT) as executor:
-            for i, (start, end) in enumerate(chunk_ranges):
-                chunk_path = chunks_tmp_dir / f"part_{i}"
-                futures[executor.submit(self._download_chunk, cdn_url, start, end, chunk_path, filename)] = i
-
-            start_time = time.time()
-            last_pct = -1
-            while not all(f.done() for f in futures):
-                if self.cancel_flags.get(filename, False):
-                    executor.shutdown(wait=False, cancel_futures=True)
-                    return "skipped"
-
-                downloaded = sum(p.stat().st_size for p in chunks_tmp_dir.glob("part_*") if p.exists())
-                pct = min(int(downloaded / total * 100), 99)
-                if (pct - last_pct) >= 2:
-                    elapsed = time.time() - start_time
-                    speed   = downloaded / elapsed if elapsed > 0 else 0
-                    eta     = (total - downloaded) / speed if speed > 0 else 0
-                    self._emit("file_progress", f"Downloading {filename}",
-                               filename=filename, percent=pct, eta=int(eta), speed=int(speed))
-                    last_pct = pct
-                time.sleep(0.3)
-
-            if not all(f.result() for f in futures):
-                return "error"
-
-        expected_sizes = [(end - start + 1) for start, end in chunk_ranges]
-        for i, expected in enumerate(expected_sizes):
-            chunk_path = chunks_tmp_dir / f"part_{i}"
-            if not chunk_path.exists(): return "error"
-            if chunk_path.stat().st_size != expected: return "error"
-
-        # Merge chunks into temp_path
-        try:
-            with open(temp_path, "wb") as final_f:
-                for i in range(self._CHUNK_COUNT):
-                    chunk_path = chunks_tmp_dir / f"part_{i}"
-                    with open(chunk_path, "rb") as part_f:
-                        shutil.copyfileobj(part_f, final_f)
-                    chunk_path.unlink()
-            shutil.rmtree(chunks_tmp_dir, ignore_errors=True)
-
-            # Final size sanity check on temp_path
-            merged_size = temp_path.stat().st_size
-            if merged_size != total:
-                temp_path.unlink(missing_ok=True)
-                return "error"
-
-            # SUCCESS: Move to final location
-            shutil.move(str(temp_path), str(final_path))
-
-            self._emit("file_progress", f"Downloading {filename}",
-                       filename=filename, percent=100, eta=0, speed=0)
-            return "ok"
-        except Exception as e:
-            self._safe_print(f"    ✗ Merge error: {e}")
-            temp_path.unlink(missing_ok=True)
+    def _download_file(self, cdn_url: str, filepath: Path, filename: str, fileurl: str = None, attempt: int = 1) -> str:
+        """Download logic using aria2p with multi-connection support and real-time progress polling."""
+        if not self._ensure_aria2():
+            self._emit("file_error", f"Aria2 Error: {filename}", filename=filename, reason="error", fileurl=fileurl, attempt=attempt, is_final=(attempt == self.max_retries))
             return "error"
 
-    def _perform_streaming_download(self, r, final_path: Path, temp_path: Path, filename: str, total: int) -> str:
-        """Helper to execute a non-chunked, sequential stream download using a temp path."""
-        try:
-            desc = f"  {filename[:40]:<40}"
-            with get_progress_bar(total, desc, disable=bool(self.progress_callback)) as bar, open(temp_path, "wb") as fh:
-                downloaded = 0
-                start = time.time()
-                last_pct = -1
-                for chunk in r.iter_content(chunk_size=65536):
-                    if self.cancel_flags.get(filename, False):
-                        return "skipped"
-
-                    if chunk:
-                        fh.write(chunk)
-                        bar.update(len(chunk))
-                        downloaded += len(chunk)
-
-                        if total > 0 and self.progress_callback:
-                            pct = int(downloaded / total * 100)
-                            if (pct - last_pct) >= 2 or pct == 100:
-                                elapsed = time.time() - start
-                                speed   = downloaded / elapsed if elapsed > 0 else 0
-                                eta     = (total - downloaded) / speed if speed > 0 else 0
-                                self._emit("file_progress", f"Downloading {filename}",
-                                           filename=filename, percent=pct, eta=int(eta), speed=int(speed))
-                                last_pct = pct
-
-            if self.cancel_flags.get(filename, False):
-                return "skipped"
-
-            # Final verification
-            actual_size = temp_path.stat().st_size
-            if total > 0 and actual_size != total:
-                temp_path.unlink(missing_ok=True)
-                return "error"
-
-            if actual_size < self._MIN_VALID_BYTES:
-                temp_path.unlink(missing_ok=True)
-                return "too_small"
-
-            # SUCCESS: Move to final location
-            shutil.move(str(temp_path), str(final_path))
-            return "ok"
-        except Exception as e:
-            self._safe_print(f"    ✗ stream error: {e}")
-            temp_path.unlink(missing_ok=True)
-            return "error"
-
-    def _download_file(self, cdn_url: str, filepath: Path, filename: str, fileurl: str = None) -> str:
-        """Download logic with .tmp staging, size verification, and selection between chunked and streaming."""
-        # 1. Setup hidden .tmp dir for staging
+        # Setup hidden .tmp dir for staging
         tmp_dir = filepath.parent / ".tmp"
         tmp_dir.mkdir(parents=True, exist_ok=True)
-        temp_path = tmp_dir / f"{filename}.part"
-
-        self._emit("file_start", f"Downloading {filename}", filename=filename, fileurl=fileurl)
-        dl_headers = {**self.session.headers, "Referer": "https://get.bunkrr.su/"}
-
-        for attempt in range(1, self.max_retries + 1):
-            if self.cancel_flags.get(filename, False):
-                return "skipped"
-
-            if attempt > 1:
-                wait_time = 2 ** attempt
-                self._safe_print(f"    ↻ Retry {attempt}/{self.max_retries} for {filename} after {wait_time}s...")
-                self._emit("file_progress", f"Retrying ({attempt}/{self.max_retries})...", 
-                           filename=filename, percent=0, attempt=attempt)
-                time.sleep(wait_time)
-
-            try:
-                # Cleanup partial files before attempt
-                if temp_path.exists(): temp_path.unlink()
-                
-                with requests.get(cdn_url, headers=dl_headers, stream=True, timeout=60) as r:
-                    r.raise_for_status()
-                    
-                    content_type = r.headers.get("content-type", "")
-                    if "text/html" in content_type:
-                        if attempt == self.max_retries:
-                            self._emit("file_error", f"Maintenance: {filename}", filename=filename, reason="maintenance")
-                            return "maintenance"
-                        continue
-
-                    total = int(r.headers.get("content-length", 0))
-                    
-                    # IMPORTANT: Verification only check the FINAL location
-                    if filepath.exists() and total > 0 and filepath.stat().st_size == total:
-                        return "already_exists"
-
-                    if attempt == 1 and total >= self._CHUNK_MIN_SIZE:
-                        r.close() 
-                        result = self._download_file_chunked(cdn_url, filepath, temp_path, filename, total, fileurl)
-                    else:
-                        result = self._perform_streaming_download(r, filepath, temp_path, filename, total)
-                    
-                    if result == "too_small":
-                        if attempt == self.max_retries:
-                            self._emit("file_error", f"File too small: {filename}", filename=filename, reason="too_small")
-                            return "maintenance"
-                        continue
-
-                    if result == "ok" or result == "already_exists":
-                        return result
-
-            except Exception as exc:
-                self._safe_print(f"    ✗ Attempt {attempt} failed: {exc}")
-                if attempt == self.max_retries:
-                    temp_path.unlink(missing_ok=True)
-                    self._emit("file_error", f"Failed after {attempt} attempts: {filename}", 
-                               filename=filename, error=str(exc))
-                    return "error"
         
-        return "error"
+        self._emit("file_start", f"Queuing {filename}", filename=filename, fileurl=fileurl, attempt=attempt)
+
+        # 1. Check if already exists in final location
+        # Since we don't have content-length yet, we'll rely on aria2 to check or we check if file exists
+        if filepath.exists():
+            return "already_exists"
+
+        # 2. Add to aria2
+        options = {
+            "dir": str(tmp_dir),
+            "out": f"{filename}.part",
+            "header": [
+                f"User-Agent: {self.session.headers['User-Agent']}",
+                "Referer: https://get.bunkrr.su/"
+            ],
+            "split": "10",            # 10 connections per file as requested
+            "max-connection-per-server": "10",
+            "min-split-size": "1M",
+            "continue": "true",
+            "check-certificate": "false"
+        }
+
+        try:
+            download = self.aria2_api.add_uris([cdn_url], options=options)
+            gid = download.gid
+        except Exception as e:
+            self._safe_print(f"    ✗ aria2 add error: {e}")
+            self._emit("file_error", f"Queue Error: {filename}", filename=filename, reason="error", fileurl=fileurl, attempt=attempt, is_final=(attempt == self.max_retries))
+            return "error"
+
+        # 3. Monitor progress
+        last_pct = -1
+        try:
+            while True:
+                # Refresh download info
+                download = self.aria2_api.get_download(gid)
+                
+                if download.status == "complete":
+                    break
+                elif download.status in ("error", "removed"):
+                    self._safe_print(f"    ✗ aria2 status {download.status}: {download.error_message}")
+                    reason = "maintenance" if "maintenance" in (download.error_message or "").lower() else "error"
+                    self._emit("file_error", f"Download {download.status}: {filename}", filename=filename, reason=reason, fileurl=fileurl, attempt=attempt, is_final=(attempt == self.max_retries))
+                    return "error"
+                
+                if self.cancel_flags.get(filename, False):
+                    self.aria2_api.remove([download], force=True, files=True)
+                    self._emit("file_error", f"Skipped: {filename}", filename=filename, reason="skipped", fileurl=fileurl, attempt=attempt, is_final=True)
+                    return "skipped"
+
+                # Emit progress
+                total = download.total_length
+                completed = download.completed_length
+                if total > 0:
+                    pct = int(completed / total * 100)
+                    if (pct - last_pct) >= 2 or pct == 100:
+                        speed = download.download_speed
+                        eta = download.eta.total_seconds() if download.eta else 0
+                        self._emit("file_progress", f"Downloading {filename}",
+                                   filename=filename, percent=pct, eta=int(eta), speed=int(speed), attempt=attempt)
+                        last_pct = pct
+
+                time.sleep(1) # Poll every second
+
+            # 4. Success: Move from .tmp/filename.part to final location
+            temp_path = tmp_dir / f"{filename}.part"
+            if temp_path.exists():
+                shutil.move(str(temp_path), str(filepath))
+                return "ok"
+            else:
+                return "error"
+
+        except Exception as e:
+            self._safe_print(f"    ✗ aria2 monitor error: {e}")
+            self._emit("file_error", f"Monitor Error: {filename}", filename=filename, reason="error", fileurl=fileurl, attempt=attempt, is_final=(attempt == self.max_retries))
+            return "error"
+
 
     def scrape(self):
         """Main entry point for scraping and downloading an album."""
@@ -338,38 +274,106 @@ class BunkrScraperCore:
 
         def _download_task(idx, file_url):
             self._emit("status", f"Processing {idx}/{total}")
-            bunkrr_url = get_bunkrr_url(self.session, file_url)
-            if not bunkrr_url: return "error"
+            
+            for attempt in range(1, self.max_retries + 1):
+                try:
+                    # Step 1: Resolve Bunkrr URL
+                    bunkrr_url = get_bunkrr_url(self.session, file_url)
+                    if not bunkrr_url:
+                        # We don't have a filename yet, so we use the slug from the URL if possible
+                        slug = file_url.split("/")[-1]
+                        if attempt < self.max_retries:
+                            time.sleep(2 * attempt)
+                            continue
+                        self._emit("file_error", f"Resolution Failed: {slug}", filename=f"File_{slug}", reason="error", fileurl=file_url, attempt=attempt, is_final=True)
+                        return "error"
 
-            cdn_url = get_cdn_url(self.session.headers, bunkrr_url)
-            if not cdn_url: return "error"
+                    # Step 2: Resolve CDN URL
+                    cdn_url = get_cdn_url(self.session.headers, bunkrr_url)
+                    if not cdn_url:
+                        slug = file_url.split("/")[-1]
+                        if attempt < self.max_retries:
+                            time.sleep(2 * attempt)
+                            continue
+                        self._emit("file_error", f"Source Hidden: {slug}", filename=f"File_{slug}", reason="error", fileurl=file_url, attempt=attempt, is_final=True)
+                        return "error"
 
-            filename = get_filename_from_url(cdn_url)
-            filepath = album_dir / filename
+                    filename = get_filename_from_url(cdn_url)
+                    filepath = album_dir / filename
 
-            overall_eta = 0
-            if idx > 1:
-                overall_eta = (time.time() - overall_start) / (idx - 1) * (total - idx + 1)
+                    # Step 3: Existence Check (Pre-download)
+                    if not self._check_url_exists(cdn_url):
+                        if attempt < self.max_retries:
+                            # Maybe the link is temporary, retry resolution too
+                            time.sleep(2 * attempt)
+                            continue
+                        self._emit("file_error", f"Missing on Server: {filename}", filename=filename, reason="error", fileurl=cdn_url, attempt=attempt, is_final=True)
+                        return "error"
 
-            if self.links_only:
-                self._emit("file_complete", f"Link Resolved: {filename}", filename=filename, overall_eta=int(overall_eta), fileurl=cdn_url)
-                return "ok"
+                    overall_eta = 0
+                    if idx > 1:
+                        overall_eta = (time.time() - overall_start) / (idx - 1) * (total - idx + 1)
 
-            result = self._download_file(cdn_url, filepath, filename, fileurl=cdn_url)
-            if result == "ok":
-                self._emit("file_complete", f"Done: {filename}", filename=filename, overall_eta=int(overall_eta), fileurl=cdn_url)
-            elif result == "already_exists":
-                self._emit("file_complete", f"Exists: {filename}", filename=filename, fileurl=cdn_url)
-            return result
+                    if self.links_only:
+                        self._emit("file_complete", f"Link Resolved: {filename}", filename=filename, overall_eta=int(overall_eta), fileurl=cdn_url)
+                        return "ok"
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {executor.submit(_download_task, idx, url): url for idx, url in enumerate(file_urls, 1)}
-            for future in as_completed(futures):
-                res = future.result()
-                if res == "ok": ok_count += 1
-                elif res == "skipped": skipped_count += 1
-                elif res == "maintenance": maintenance_count += 1
-                else: error_count += 1
+                    result = self._download_file(cdn_url, filepath, filename, fileurl=cdn_url, attempt=attempt)
+                    if result == "ok":
+                        self._emit("file_complete", f"Done: {filename}", filename=filename, overall_eta=int(overall_eta), fileurl=cdn_url)
+                        return "ok"
+                    elif result == "already_exists":
+                        self._emit("file_complete", f"Exists: {filename}", filename=filename, fileurl=cdn_url)
+                        return "ok"
+                    elif result == "skipped":
+                        return "skipped"
+                    
+                    # If it's a generic "error", loop will retry
+                    if attempt < self.max_retries:
+                        time.sleep(2 * attempt)
+                        continue
+                    
+                    # Definitively failed after all retries: cleanup residue
+                    tmp_dir = album_dir / ".tmp"
+                    part_file = tmp_dir / f"{filename}.part"
+                    aria_file = tmp_dir / f"{filename}.part.aria2"
+                    try:
+                        if part_file.exists(): part_file.unlink()
+                        if aria_file.exists(): aria_file.unlink()
+                    except: pass
+                    
+                except Exception as e:
+                    if attempt < self.max_retries:
+                        time.sleep(2 * attempt)
+                        continue
+                    self._safe_print(f"    ✗ Task exception on {file_url}: {e}")
+                    
+                    # Also cleanup on exception if final attempt
+                    try:
+                        # Attempt to resolve info if possible
+                        if 'filename' in locals() and 'album_dir' in locals():
+                            tmp_dir = album_dir / ".tmp"
+                            part_file = tmp_dir / f"{filename}.part"
+                            aria_file = tmp_dir / f"{filename}.part.aria2"
+                            if part_file.exists(): part_file.unlink()
+                            if aria_file.exists(): aria_file.unlink()
+                    except: pass
+
+            return "error"
+
+
+        try:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = {executor.submit(_download_task, idx, url): url for idx, url in enumerate(file_urls, 1)}
+                for future in as_completed(futures):
+                    res = future.result()
+                    if res == "ok": ok_count += 1
+                    elif res == "skipped": skipped_count += 1
+                    elif res == "maintenance": maintenance_count += 1
+                    else: error_count += 1
+        finally:
+            if self.aria2_mgr:
+                self.aria2_mgr.stop_daemon()
 
         return {
             "success": True, "total": total, "downloaded": ok_count, 

@@ -39,6 +39,12 @@ if not exist ".venv\Scripts\python.exe" (
     call .venv\Scripts\activate.bat
 )
 
+echo [SETUP] Checking for Python dependency updates...
+pip install -r requirements.txt --quiet
+if errorlevel 1 (
+    echo  WARNING: Failed to update Python dependencies.
+)
+
 :: ────────────────────────────────────────────────────────────────────────────
 :: STEP 2 — Node / Electron dependencies
 :: ────────────────────────────────────────────────────────────────────────────
@@ -55,6 +61,14 @@ if not exist "electron\node_modules\electron" (
 ) else (
     echo [OK] Electron environment found.
 )
+
+echo [SETUP] Checking for Electron dependency updates...
+cd electron
+call npm install --no-audit --no-fund --quiet
+if errorlevel 1 (
+    echo  WARNING: Failed to update Electron dependencies.
+)
+cd ..
 
 :: ────────────────────────────────────────────────────────────────────────────
 :: STEP 3 — Launch

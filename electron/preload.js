@@ -55,6 +55,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** Stop specific download or all if no ID provided */
     stopDownload: (taskId) => ipcRenderer.send('stop-download', taskId),
 
+    /** Perform a cleanup of the destination folder */
+    cleanupDownloads: (targetDir) => ipcRenderer.invoke('cleanup-downloads', targetDir),
+
     /** Remove all listeners (call before starting a new download) */
     removeAllListeners: () => {
         ipcRenderer.removeAllListeners('progress');

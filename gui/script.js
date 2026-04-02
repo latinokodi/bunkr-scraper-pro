@@ -33,6 +33,7 @@ const elements = {
     queueList:          document.getElementById('queueList'),
     copyAllQueueBtn:    document.getElementById('copyAllQueueBtn'),
     copyAllActiveBtn:   document.getElementById('copyAllActiveBtn'),
+    cleanupBtn:         document.getElementById('cleanupBtn'),
     totalSpeed:         document.getElementById('totalSpeed'),
     currentAlbumTitle:  document.getElementById('currentAlbumTitle'),
     
@@ -180,38 +181,6 @@ function skipFile(filename) {
     window.electronAPI.skipFile(filename);
 }
 
-function retryFile(url, filename) {
-    if (!url) {
-        showToast('error', 'Retry Failed', 'No source URL found for this file');
-        return;
-    }
-    window.electronAPI.addToQueue(url, state.selectedFolder, state.concurrency);
-    showToast('success', 'File Re-Queued', filename);
-
-    const row = document.querySelector(`[data-filename="${filename}"]`);
-    if (row) {
-        row.querySelector('.retry-btn')?.remove();
-        const badge = row.querySelector('.status-badge');
-        badge.className = 'status-badge downloading';
-        badge.innerHTML = `${icons.downloading} Retrying`;
-
-        if (!row.querySelector('.row-progress-container')) {
-            const progress = document.createElement('div');
-            progress.className = 'col-progress row-progress-container';
-            progress.innerHTML = `
-                <div class="row-progress-info">
-                    <span class="pct">0%</span>
-                    <span class="eta">...</span>
-                </div>
-                <div class="row-progress-bar">
-                    <div class="row-progress-fill" style="width: 0%"></div>
-                </div>
-            `;
-            row.insertBefore(progress, badge.nextSibling);
-        }
-    }
-}
-
 // ── Persistence ────────────────────────────────────────────────────────────────
 function loadPersistentPath() {
     const saved = localStorage.getItem('lastDownloadPath');
@@ -247,6 +216,7 @@ elements.navDownloads.addEventListener('click', handleOpenDownloads);
 elements.grabBtn.addEventListener('click', handleGrabLinks);
 elements.copyAllGrabbedBtn.addEventListener('click', handleCopyAllGrabbed);
 elements.clearGrabberBtn.addEventListener('click', handleClearGrabber);
+elements.cleanupBtn.addEventListener('click', handleCleanup);
 
 loadPersistentPath();
 
@@ -408,6 +378,37 @@ async function handleOpenDownloads() {
     }
 }
 
+async function handleCleanup() {
+    if (state.activeDownloads.size > 0) {
+        showToast('error', 'Action Blocked', 'Cannot clean up while downloads are active');
+        return;
+    }
+
+    const confirmed = confirm("Are you sure you want to clean up?\n\nThis will permanently delete:\n- All images\n- All videos <= 60 seconds\n- All .tmp folders\n\nThis action cannot be undone.");
+    
+    if (!confirmed) return;
+
+    elements.cleanupBtn.disabled = true;
+    const oldText = elements.cleanupBtn.textContent;
+    elements.cleanupBtn.textContent = 'CLEANING...';
+    
+    try {
+        const result = await window.electronAPI.cleanupDownloads(state.selectedFolder);
+        if (result.success) {
+            const stats = result.stats || {};
+            const msg = `Removed: ${stats.images || 0} images, ${stats.videos || 0} short videos, ${stats.folders || 0} tmp folders.`;
+            showToast('success', 'Cleanup Complete', msg);
+        } else {
+            showToast('error', 'Cleanup Failed', result.error || 'Check console for details');
+        }
+    } catch (err) {
+        showToast('error', 'Cleanup Error', err.message);
+    } finally {
+        elements.cleanupBtn.disabled = false;
+        elements.cleanupBtn.textContent = oldText;
+    }
+}
+
 // ── Link Grabber Logic ───────────────────────────────────────────────────────
 async function handleGrabLinks() {
     const url = elements.grabberInput.value.trim();
@@ -564,14 +565,20 @@ window.onPythonProgress = function (data) {
     }
 
     if (data.type === 'file_error') {
-        download.stats.failed++;
+        const isFinal = !!data.is_final;
+        if (isFinal) {
+            download.stats.failed++;
+        }
         const status = data.reason === 'maintenance' ? 'maintenance' : (data.reason === 'skipped' ? 'skipped' : 'error');
 
         const existing = document.querySelector(`[data-filename="${data.filename}"]`);
         if (!existing && data.filename) addTableRow(data.filename, data.fileurl, taskId);
 
-        if (data.filename) {
+        if (isFinal && data.filename) {
             updateTableRowStatus(data.filename, status, data.fileurl);
+        } else if (!isFinal && data.filename) {
+            // Update UI to show it's retrying even on transient error
+            updateTableRowProgress(data.filename, 0, 0, 0, data.attempt);
         }
         updateStatsDisplay();
     }
@@ -621,7 +628,7 @@ function updateTableRowProgress(filename, percent, eta, speed, attempt = 1) {
     const badge = row.querySelector('.status-badge');
     if (attempt > 1) {
         badge.className = 'status-badge maintenance';
-        badge.innerHTML = `${icons.maintenance} Retry ${attempt}/5`;
+        badge.innerHTML = `${icons.maintenance} Retrying ${attempt}/10`;
     } else {
         badge.className = 'status-badge downloading';
         badge.innerHTML = `${icons.downloading} Active`;
@@ -637,6 +644,7 @@ function updateTableRowProgress(filename, percent, eta, speed, attempt = 1) {
     if (s)    s.textContent    = formatSpeed(speed || 0);
     if (e)    e.textContent    = eta > 0 ? formatSecs(eta) : (percent >= 100 ? 'Finishing' : '...');
 }
+
 
 function updateTableRowStatus(filename, status, fileurl = '') {
     const row = document.querySelector(`[data-filename="${filename}"]`);
@@ -695,20 +703,9 @@ function updateTableRowStatus(filename, status, fileurl = '') {
                 }
             }, delay); 
         }
-
-        const retryUrl = row.dataset.fileurl;
-        if ((status === 'error' || status === 'skipped') && retryUrl) {
-            const retryBtn = document.createElement('button');
-            retryBtn.className = 'retry-btn';
-            retryBtn.title = 'Retry File';
-            retryBtn.innerHTML = `
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
-            `;
-            retryBtn.onclick = () => retryFile(retryUrl, filename);
-            row.appendChild(retryBtn);
-        }
     }
 }
+
 
 // ── Utility Functions ─────────────────────────────────────────────────────────
 function formatSecs(s) {
