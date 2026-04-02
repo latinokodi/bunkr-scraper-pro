@@ -25,22 +25,14 @@ if not exist ".venv\Scripts\python.exe" (
         echo  ERROR: Could not create virtual environment.
         pause & exit /b 1
     )
-
-    echo [SETUP] Installing Python dependencies...
-    call .venv\Scripts\activate.bat
-    python -m pip install --upgrade pip --quiet
-    pip install -r requirements.txt --quiet
-    if errorlevel 1 (
-        echo  ERROR: Failed to install Python dependencies.
-        pause & exit /b 1
-    )
-) else (
-    echo [OK] Python environment found.
-    call .venv\Scripts\activate.bat
 )
 
-echo [SETUP] Checking for Python dependency updates...
-pip install -r requirements.txt --quiet
+echo [OK] Python environment found.
+call .venv\Scripts\activate.bat
+
+echo [SETUP] Upgrading pip and dependencies...
+python -m pip install --upgrade pip --quiet
+python -m pip install -r requirements.txt --quiet
 if errorlevel 1 (
     echo  WARNING: Failed to update Python dependencies.
 )

@@ -21,7 +21,7 @@ def main():
     parser.add_argument("url", nargs="?", help="Bunkr album URL or file URL")
     parser.add_argument("output", nargs="?", default="downloads", help="Output directory")
     parser.add_argument("--threads", type=int, default=1, help="Max parallel downloads")
-    parser.add_argument("--retries", type=int, default=10, help="Max retries per file")
+    parser.add_argument("--retries", type=int, default=5, help="Max retries per file")
     parser.add_argument("--links-only", action="store_true", help="Scrape links only")
     parser.add_argument("--cleanup", action="store_true", help="Clean up the output directory")
     args = parser.parse_args()

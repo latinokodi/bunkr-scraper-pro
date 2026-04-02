@@ -10,6 +10,7 @@ const state = {
     activeDownloads: new Map(),  // Map<taskId, { url, albumName, stats, files }>
     selectedFolder: null,
     concurrency: 10,
+    failedLogs: [],
 };
 
 // DOM Elements
@@ -51,6 +52,14 @@ const elements = {
     grabberList:        document.getElementById('grabberList'),
     copyAllGrabbedBtn:  document.getElementById('copyAllGrabbedBtn'),
     clearGrabberBtn:    document.getElementById('clearGrabberBtn'),
+
+    // Failed Logs View
+    navFailedLogs:      document.getElementById('navFailedLogs'),
+    viewFailedLogs:     document.getElementById('viewFailedLogs'),
+    failedLogList:      document.getElementById('failedLogList'),
+    copyAllFailedBtn:   document.getElementById('copyAllFailedBtn'),
+    clearFailedBtn:     document.getElementById('clearFailedBtn'),
+    failedLogStatus:    document.getElementById('failedLogStatus'),
 };
 
 let activeGrabberTaskId = null;
@@ -217,6 +226,9 @@ elements.grabBtn.addEventListener('click', handleGrabLinks);
 elements.copyAllGrabbedBtn.addEventListener('click', handleCopyAllGrabbed);
 elements.clearGrabberBtn.addEventListener('click', handleClearGrabber);
 elements.cleanupBtn.addEventListener('click', handleCleanup);
+elements.navFailedLogs.addEventListener('click', () => switchTab('failed'));
+elements.copyAllFailedBtn.addEventListener('click', handleCopyAllFailed);
+elements.clearFailedBtn.addEventListener('click', handleClearFailedLogs);
 
 loadPersistentPath();
 
@@ -355,8 +367,8 @@ function copyFileUrl(filename) {
 
 // ── Tab Management ───────────────────────────────────────────────────────────
 function switchTab(tab) {
-    const views = [elements.viewDashboard, elements.viewGrabber];
-    const navs = [elements.navDashboard, elements.navGrabber];
+    const views = [elements.viewDashboard, elements.viewGrabber, elements.viewFailedLogs];
+    const navs = [elements.navDashboard, elements.navGrabber, elements.navFailedLogs];
 
     views.forEach(v => v.classList.remove('active'));
     navs.forEach(n => n.classList.remove('active'));
@@ -367,6 +379,9 @@ function switchTab(tab) {
     } else if (tab === 'grabber') {
         elements.viewGrabber.classList.add('active');
         elements.navGrabber.classList.add('active');
+    } else if (tab === 'failed') {
+        elements.viewFailedLogs.classList.add('active');
+        elements.navFailedLogs.classList.add('active');
     }
 }
 
@@ -510,19 +525,23 @@ function updateStatsDisplay() {
         updateCircle(0);
     }
 
-    // Update Total Speed (Aggregated from active rows)
+    // Update Total Speed (Aggregated from active rows only)
     let aggregateSpeed = 0;
-    document.querySelectorAll('.table-row .speed').forEach(el => {
-        const text = el.textContent || '';
-        // If row is not 'downloading' status anymore, speed won't be there or will be 0
-        if (text && text.includes('/s')) {
-            const val = parseFloat(text);
-            const unit = text.split(' ')[1] || 'B/s';
-            let bytes = val;
-            if (unit.startsWith('K')) bytes *= 1024;
-            else if (unit.startsWith('M')) bytes *= 1024 * 1024;
-            else if (unit.startsWith('G')) bytes *= 1024 * 1024 * 1024;
-            aggregateSpeed += bytes;
+    document.querySelectorAll('.table-row').forEach(row => {
+        const badge = row.querySelector('.status-badge');
+        // Only count speed if it matches 'downloading' class AND is not retrying
+        if (badge && badge.classList.contains('downloading')) {
+            const speedEl = row.querySelector('.speed');
+            const text = speedEl ? speedEl.textContent : '';
+            if (text && text.includes('/s')) {
+                const val = parseFloat(text);
+                const unit = text.split(' ')[1] || 'B/s';
+                let bytes = val;
+                if (unit.startsWith('K')) bytes *= 1024;
+                else if (unit.startsWith('M')) bytes *= 1024 * 1024;
+                else if (unit.startsWith('G')) bytes *= 1024 * 1024 * 1024;
+                aggregateSpeed += bytes;
+            }
         }
     });
     elements.totalSpeed.textContent = formatSpeed(aggregateSpeed);
@@ -567,7 +586,11 @@ window.onPythonProgress = function (data) {
     if (data.type === 'file_error') {
         const isFinal = !!data.is_final;
         if (isFinal) {
-            download.stats.failed++;
+            if (data.reason === 'skipped') {
+                download.stats.total--;
+            } else {
+                download.stats.failed++;
+            }
         }
         const status = data.reason === 'maintenance' ? 'maintenance' : (data.reason === 'skipped' ? 'skipped' : 'error');
 
@@ -576,6 +599,11 @@ window.onPythonProgress = function (data) {
 
         if (isFinal && data.filename) {
             updateTableRowStatus(data.filename, status, data.fileurl);
+            
+            // Log to Failed Section if it's a real failure (not skipped)
+            if (status === 'error' || status === 'maintenance') {
+                addFailedLog(data.filename, data.fileurl);
+            }
         } else if (!isFinal && data.filename) {
             // Update UI to show it's retrying even on transient error
             updateTableRowProgress(data.filename, 0, 0, 0, data.attempt);
@@ -628,7 +656,7 @@ function updateTableRowProgress(filename, percent, eta, speed, attempt = 1) {
     const badge = row.querySelector('.status-badge');
     if (attempt > 1) {
         badge.className = 'status-badge maintenance';
-        badge.innerHTML = `${icons.maintenance} Retrying ${attempt}/10`;
+        badge.innerHTML = `${icons.maintenance} Retrying ${attempt}/5`;
     } else {
         badge.className = 'status-badge downloading';
         badge.innerHTML = `${icons.downloading} Active`;
@@ -679,9 +707,12 @@ function updateTableRowStatus(filename, status, fileurl = '') {
         const skipBtn = row.querySelector('.skip-btn');
         if (skipBtn) skipBtn.remove();
 
+        const speedEl = row.querySelector('.speed');
+        if (speedEl) speedEl.textContent = '---';
+
         // ── Auto Remove Finished / Failed Downloads ──
-        if (status === 'success' || status === 'error' || status === 'maintenance') {
-            const delay = status === 'success' ? 3000 : 5000; // 3s for success, 5s for failures
+        if (status === 'success' || status === 'error' || status === 'maintenance' || status === 'skipped') {
+            const delay = (status === 'success' || status === 'skipped') ? 1500 : 5000; // 1.5s for success/skipped, 5s for failures
             setTimeout(() => {
                 if (row.parentNode) {
                     row.style.opacity = '0';
@@ -728,6 +759,50 @@ function copyToClipboard(text, successMsg = 'URL copied to clipboard') {
     }).catch(err => {
         showToast('error', 'Copy Failed', 'Could not access clipboard');
     });
+}
+
+function addFailedLog(filename, url) {
+    if (!url) return;
+    
+    // Prevent duplicates
+    if (state.failedLogs.some(log => log.url === url)) return;
+
+    state.failedLogs.push({ filename, url });
+    
+    const empty = elements.failedLogList.querySelector('.empty-state');
+    if (empty) empty.remove();
+
+    const row = document.createElement('div');
+    row.className = 'grabbed-link-row'; // Reuse styles from grabber
+    row.dataset.url = url;
+    row.innerHTML = `
+        <div class="grabbed-url" title="${url}">
+            <span style="color: var(--neon-red); font-weight: 600; margin-right: 8px;">FAIL:</span>
+            ${filename} <span style="opacity: 0.5; margin-left: 8px;">(${url})</span>
+        </div>
+        <button class="copy-link-btn" title="Copy Link" onclick="copyToClipboard('${url}', 'Link copied')">
+            ${icons.copy}
+        </button>
+    `;
+    elements.failedLogList.prepend(row);
+    elements.failedLogStatus.textContent = `${state.failedLogs.length} failures logged.`;
+}
+
+function handleCopyAllFailed() {
+    if (state.failedLogs.length === 0) return;
+    const text = state.failedLogs.map(log => log.url).join('\n');
+    copyToClipboard(text, 'All failed links copied');
+}
+
+function handleClearFailedLogs() {
+    state.failedLogs = [];
+    elements.failedLogList.innerHTML = `
+        <div class="empty-state">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            <p>No failed downloads logged.</p>
+        </div>
+    `;
+    elements.failedLogStatus.textContent = 'Failed downloads will be logged here for retry.';
 }
 
 function showToast(type, title, text) {

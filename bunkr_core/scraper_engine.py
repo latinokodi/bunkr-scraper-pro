@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
 from .ui_helpers import get_progress_bar
-from .utils import sanitize_filename, get_filename_from_url, get_album_name
+from .utils import sanitize_filename, get_filename_from_url, get_album_name, VIDEO_EXTENSIONS
 from .site_parser import get_file_urls, get_bunkrr_url, get_cdn_url
 from .bin_fetcher import get_aria2_path
 from .aria2_manager import Aria2Manager
@@ -23,7 +23,7 @@ class BunkrScraperCore:
 
     _MIN_VALID_BYTES = 1024 * 50   # 50 KB
 
-    def __init__(self, album_url, output_dir="downloads", progress_callback=None, max_workers=1, max_retries=10, links_only=False):
+    def __init__(self, album_url, output_dir="downloads", progress_callback=None, max_workers=1, max_retries=5, links_only=False):
         self.album_url         = album_url
         self.output_dir        = output_dir
         self.progress_callback = progress_callback
@@ -300,6 +300,12 @@ class BunkrScraperCore:
 
                     filename = get_filename_from_url(cdn_url)
                     filepath = album_dir / filename
+
+                    # Step 2.5: Video-only Filter
+                    ext = Path(filename).suffix.lower()
+                    if ext not in VIDEO_EXTENSIONS:
+                        self._emit("file_error", f"Skipped (Not Video): {filename}", filename=filename, reason="skipped", fileurl=file_url, attempt=attempt, is_final=True)
+                        return "skipped"
 
                     # Step 3: Existence Check (Pre-download)
                     if not self._check_url_exists(cdn_url):

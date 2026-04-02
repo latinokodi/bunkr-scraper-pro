@@ -2,6 +2,8 @@ import re
 import os
 from urllib.parse import urlparse, parse_qs, unquote
 
+VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.webm', '.mov', '.avi', '.wmv', '.flv', '.3gp', '.ts', '.m4v'}
+
 def sanitize_filename(name: str) -> str:
     """Removes invalid characters for Windows/Linux filesystems."""
     name = re.sub(r'[<>:"/\\|?*]', "_", name).strip(". ")
