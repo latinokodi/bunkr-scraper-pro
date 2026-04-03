@@ -16,6 +16,7 @@ release/
 # Media / User Data
 downloads/
 temp/
+*.tmp
 
 # OS
 .DS_Store
