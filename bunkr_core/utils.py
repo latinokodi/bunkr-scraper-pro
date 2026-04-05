@@ -3,6 +3,7 @@ import os
 from urllib.parse import urlparse, parse_qs, unquote
 
 VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.webm', '.mov', '.avi', '.wmv', '.flv', '.3gp', '.ts', '.m4v'}
+ARCHIVE_EXTENSIONS = {'.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.pkg', '.deb', '.iso'}
 
 def sanitize_filename(name: str) -> str:
     """Removes invalid characters for Windows/Linux filesystems."""

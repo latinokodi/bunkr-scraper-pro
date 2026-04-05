@@ -3,4 +3,5 @@ beautifulsoup4
 pywebview
 tqdm
 hachoir
-aria2p
+httpx
+aiohttp

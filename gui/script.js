@@ -9,7 +9,7 @@
 const state = {
     activeDownloads: new Map(),  // Map<taskId, { url, albumName, stats, files }>
     selectedFolder: null,
-    concurrency: 10,
+    concurrency: 3,
 };
 
 // DOM Elements
@@ -36,6 +36,7 @@ const elements = {
     cleanupBtn:         document.getElementById('cleanupBtn'),
     totalSpeed:         document.getElementById('totalSpeed'),
     currentAlbumTitle:  document.getElementById('currentAlbumTitle'),
+    concurrencyInput:   document.getElementById('concurrencyInput'),
     
     // Tabs
     navDashboard:       document.getElementById('navDashboard'),
@@ -69,6 +70,13 @@ const icons = {
 window.addEventListener('DOMContentLoaded', async () => {
     const q = await window.electronAPI.getQueue();
     renderQueue(q);
+
+    // Sync concurrency
+    const config = await window.electronAPI.getConcurrency();
+    if (config && elements.concurrencyInput) {
+        elements.concurrencyInput.value = config.albums;
+        state.concurrency = config.albums;
+    }
 });
 
 window.electronAPI.onQueueUpdated((q) => {
@@ -145,6 +153,20 @@ function updateUIForActiveDownloads() {
     }
 }
 
+// ── Concurrency Controls ──────────────────────────────────────────────────────
+if (elements.concurrencyInput) {
+    elements.concurrencyInput.addEventListener('change', (e) => {
+        let val = parseInt(e.target.value, 10);
+        if (isNaN(val) || val < 1) val = 1;
+        if (val > 10) val = 10;
+        
+        e.target.value = val;
+        state.concurrency = val;
+        window.electronAPI.setConcurrency(val);
+        showToast('success', 'Settings Updated', `Max concurrent downloads set to ${val}`);
+    });
+}
+
 // ── Queue Rendering ────────────────────────────────────────────────────────────
 function renderQueue(q) {
     if (!q || q.length === 0) {
@@ -218,6 +240,8 @@ elements.copyAllGrabbedBtn.addEventListener('click', handleCopyAllGrabbed);
 elements.clearGrabberBtn.addEventListener('click', handleClearGrabber);
 elements.cleanupBtn.addEventListener('click', handleCleanup);
 
+// Consolidated listener already handled above (Line 158)
+
 loadPersistentPath();
 
 elements.urlInput.addEventListener('keypress', (e) => {
@@ -263,6 +287,15 @@ window.electronAPI.onResult((result) => {
     if (state.activeDownloads.has(taskId)) {
         state.activeDownloads.delete(taskId);
     }
+
+    // ── Remove all rows belonging to this task from the table ──
+    const rows = elements.filesList.querySelectorAll(`[data-task-id="${taskId}"]`);
+    rows.forEach(row => {
+        row.style.opacity = '0';
+        row.style.transform = 'translateY(-10px)';
+        row.style.transition = 'all 0.3s ease';
+        setTimeout(() => row.remove(), 300);
+    });
 
     updateUIForActiveDownloads();
 
@@ -465,7 +498,10 @@ function addGrabberLinkRow(filename, url) {
     row.className = 'grabbed-link-row';
     row.dataset.url = url;
     row.innerHTML = `
-        <div class="grabbed-url" title="${url}">${url}</div>
+        <div class="grabbed-info">
+            <div class="grabbed-name">${filename}</div>
+            <div class="grabbed-url" title="${url}">${url}</div>
+        </div>
         <button class="copy-link-btn" title="Copy Resolved URL" onclick="copyToClipboard('${url}', 'Link copied')">
             ${icons.copy}
         </button>
@@ -554,6 +590,10 @@ window.onPythonProgress = function (data) {
     }
 
     if (data.type === 'file_progress') {
+        const existing = document.querySelector(`[data-filename="${data.filename}"]`);
+        if (!existing) {
+            addTableRow(data.filename, data.fileurl || '', taskId);
+        }
         updateTableRowProgress(data.filename, data.percent, data.eta, data.speed, data.attempt);
         updateStatsDisplay(); // Keep Total Speed in sync
     }
@@ -580,7 +620,10 @@ window.onPythonProgress = function (data) {
         const status = data.reason === 'maintenance' ? 'maintenance' : (data.reason === 'skipped' ? 'skipped' : 'error');
 
         const existing = document.querySelector(`[data-filename="${data.filename}"]`);
-        if (!existing && data.filename) addTableRow(data.filename, data.fileurl, taskId);
+        // Only add a row for errors if it was already tracking OR if it's a real error (not a skip)
+        if (!existing && data.filename && data.reason !== 'skipped') {
+            addTableRow(data.filename, data.fileurl, taskId);
+        }
 
         if (isFinal && data.filename) {
             updateTableRowStatus(data.filename, status, data.fileurl);
@@ -594,6 +637,14 @@ window.onPythonProgress = function (data) {
 
 // ── Table Row Management ──────────────────────────────────────────────────────
 function addTableRow(filename, fileurl = '', taskId = '') {
+    // ── Prevent duplicates: if row already exists, update taskId and return ──
+    const existing = document.querySelector(`[data-filename="${filename}"]`);
+    if (existing) {
+        if (taskId) existing.dataset.taskId = taskId;
+        if (fileurl) existing.dataset.fileurl = fileurl;
+        return;
+    }
+
     const empty = elements.filesList.querySelector('.empty-state');
     if (empty) empty.remove();
 
@@ -665,6 +716,11 @@ function updateTableRowStatus(filename, status, fileurl = '') {
         case 'success':
             badge.className = 'status-badge success';
             badge.innerHTML = `${icons.success} Finished`;
+            // Force 100% on success
+            const fill = row.querySelector('.row-progress-fill');
+            const pctText = row.querySelector('.pct');
+            if (fill) fill.style.width = '100%';
+            if (pctText) pctText.textContent = '100%';
             break;
         case 'error':
             badge.className = 'status-badge error';

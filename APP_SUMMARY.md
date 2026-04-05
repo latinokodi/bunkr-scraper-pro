@@ -7,9 +7,9 @@ A desktop app to download media from Bunkr albums.
 | Layer | Tech | File |
 |-------|------|------|
 | Frontend | HTML/CSS/JS (Neon Cyberpunk UI) | `gui/` |
-| Runtime | Electron (IPC bridge) | `electron/main.js`, `preload.js` |
-| Backend | Python 3.12 (Requests + BS4) | `scraper_core.py` (Wrapper) |
+| Runtime | Electron (IPC bridge) | `electron/lib/` |
 | Core Engine | Modularized Package | `bunkr_core/` |
+| Main Wrapper | Python Entry Point | `bunkr_core/scraper_core.py` |
 
 ## Core Download Logic (4-Step Chain)
 
@@ -41,13 +41,14 @@ User → Electron (IPC) → Python subprocess → stdout JSON → Electron → G
 
 ```
 bunkrscr/
-├── scraper_core.py      # Main entry point (Thin wrapper)
 ├── bunkr_core/          # Modularized scraping engine
 │   ├── __init__.py      # Package export
-│   ├── scraper_engine.py# Main orchestration class
-│   ├── site_parser.py   # Bunkr-specific HTML parsing
+│   ├── scraper_core.py  # Main entry point (Thin wrapper)
+│   ├── scraper_engine.py# Async orchestration class
+│   ├── site_parser.py   # Bunkr-specific HTML parsing (Async)
 │   ├── crypto.py        # XOR Decryption logic
-│   ├── ui_helpers.py    # Progress bars (tqdm/fallback)
+│   ├── ui_helpers.py    # Progress bars
+│   ├── aria2_manager.py # Global daemon interface
 │   └── utils.py         # OS & Filename helpers
 ├── gui/
 │   ├── index.html       # Dashboard UI

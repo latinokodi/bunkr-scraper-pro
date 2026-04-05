@@ -58,6 +58,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** Perform a cleanup of the destination folder */
     cleanupDownloads: (targetDir) => ipcRenderer.invoke('cleanup-downloads', targetDir),
 
+    /** Update global concurrency limits */
+    setConcurrency: (value) => ipcRenderer.send('set-concurrency', value),
+
+    /** Get current concurrency state */
+    getConcurrency: () => ipcRenderer.invoke('get-concurrency'),
+
     /** Remove all listeners (call before starting a new download) */
     removeAllListeners: () => {
         ipcRenderer.removeAllListeners('progress');

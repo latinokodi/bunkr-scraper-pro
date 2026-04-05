@@ -1,86 +1,25 @@
 @echo off
-setlocal
+title Bunkr Scraper PRO
+echo [OK] 1: Starting Bunkr Scraper PRO...
 
-:: ── Change to script's own directory
 cd /d "%~dp0"
 
-echo ============================================
-echo   Bunkr Scraper - Launcher
-echo ============================================
-echo.
+echo [OK] 2: Activating Python venv...
+call ".venv\Scripts\activate.bat"
 
-:: ────────────────────────────────────────────────────────────────────────────
-:: STEP 1 — Python virtual environment
-:: ────────────────────────────────────────────────────────────────────────────
-if not exist ".venv\Scripts\python.exe" (
-    echo [SETUP] Python virtual environment not found.
-    python --version >nul 2>&1
-    if errorlevel 1 (
-        echo  ERROR: Python is not installed or not in PATH.
-        pause & exit /b 1
-    )
-    echo [SETUP] Creating environment...
-    python -m venv .venv
-    if errorlevel 1 (
-        echo  ERROR: Could not create virtual environment.
-        pause & exit /b 1
-    )
-)
-
-echo [OK] Python environment found.
-call .venv\Scripts\activate.bat
-
-echo [SETUP] Upgrading pip and dependencies...
-python -m pip install --upgrade pip --quiet
+echo [OK] 3: Checking dependencies...
 python -m pip install -r requirements.txt --quiet
-if errorlevel 1 (
-    echo  WARNING: Failed to update Python dependencies.
-)
 
-:: ────────────────────────────────────────────────────────────────────────────
-:: STEP 2 — Node / Electron dependencies
-:: ────────────────────────────────────────────────────────────────────────────
-if not exist "electron\node_modules\electron" (
-    echo [SETUP] Electron missing. Installing...
-    cd electron
-    call npm install
-    if errorlevel 1 (
-        echo  ERROR: npm install failed.
-        cd ..
-        pause & exit /b 1
-    )
-    cd ..
-) else (
-    echo [OK] Electron environment found.
-)
-
-echo [SETUP] Checking for Electron dependency updates...
-cd electron
-call npm install --no-audit --no-fund --quiet
-if errorlevel 1 (
-    echo  WARNING: Failed to update Electron dependencies.
-)
-cd ..
-
-:: ────────────────────────────────────────────────────────────────────────────
-:: STEP 3 — Launch
-:: ────────────────────────────────────────────────────────────────────────────
-echo.
-echo [LAUNCH] Starting Bunkr Scraper...
+echo [OK] 4: Entering Electron folder...
 cd electron
 
-:: Try running electron directly from node_modules for better reliability
-if exist "node_modules\.bin\electron.cmd" (
-    call node_modules\.bin\electron.cmd .
-) else (
-    call npx electron .
-)
+echo [OK] 5: Launching App...
+call npx electron .
 
 if errorlevel 1 (
-    echo.
-    echo  ERROR: Electron failed to start.
-    echo.
+    echo [ERROR] Electron failed to start.
     pause
 )
 
 cd ..
+exit /b 0
