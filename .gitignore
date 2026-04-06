@@ -22,3 +22,9 @@ temp/
 .DS_Store
 Thumbs.db
 bin/
+
+# Agent AI tools
+.agent/
+.claude/
+.gemini/
+.antigravity/
