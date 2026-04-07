@@ -129,6 +129,8 @@ processes.on('process-stopped', ({ id, code }) => {
 // ── Window Management ────────────────────────────────────────────────────────
 
 function createWindow() {
+    const appPath = app.getAppPath();
+    
     mainWindow = new BrowserWindow({
         width: 1200,
         height: 900,
@@ -137,7 +139,7 @@ function createWindow() {
         backgroundColor: '#0f0f23',
         autoHideMenuBar: true,
         show: false,
-        icon: path.join(__dirname, 'assets', 'icon.png'),
+        icon: path.join(__dirname, 'assets', 'icon.ico'),
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -146,14 +148,31 @@ function createWindow() {
         title: 'Bunkr Scraper PRO',
     });
 
-    mainWindow.loadFile(path.join(__dirname, '..', 'gui', 'index.html'));
+    // Try to find index.html in common locations
+    const possiblePaths = [
+        path.join(__dirname, 'gui', 'index.html'),
+        path.join(__dirname, '..', 'gui', 'index.html'),
+        path.join(appPath, 'gui', 'index.html'),
+        path.join(appPath, '..', 'gui', 'index.html'),
+    ];
 
-    if (isPackaged) {
-        // Fallback for packaged app if the above fails
-        const packagedPath = path.join(__dirname, 'gui', 'index.html');
-        if (fs.existsSync(packagedPath)) {
-            mainWindow.loadFile(packagedPath);
+    let loaded = false;
+    for (const p of possiblePaths) {
+        if (fs.existsSync(p)) {
+            mainWindow.loadFile(p);
+            loaded = true;
+            break;
         }
+    }
+
+    if (!loaded) {
+        console.error('Could not find index.html in any of the following locations:', possiblePaths);
+        // Load a simple error page or message
+        mainWindow.loadURL(`data:text/html,<html><body style="background:#0f0f23;color:white;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;"><div><h1>Initialization Error</h1><p>Could not find UI files. Please check the installation.</p><p style="font-size:0.8em;color:gray;">Searched in: ${possiblePaths.join('<br>')}</p></div></body></html>`);
+    }
+
+    if (!isPackaged || process.env.DEBUG_PROD === 'true') {
+        mainWindow.webContents.openDevTools();
     }
 
     mainWindow.once('ready-to-show', () => {
