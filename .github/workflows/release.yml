@@ -1,0 +1,58 @@
+name: Release Bunkr Scraper PRO
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build Python Core (PyInstaller)
+        run: |
+          mkdir bin
+          pyinstaller --onefile --noconsole --name bunkr_scraper_core bunkr_core/scraper_core.py
+          move dist/bunkr_scraper_core.exe bin/bunkr_scraper_core.exe
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: './electron/package-lock.json'
+
+      - name: Install Electron Dependencies
+        working-directory: ./electron
+        run: npm install
+
+      - name: Build Electron App (Portable EXE)
+        working-directory: ./electron
+        run: npm run dist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprop/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

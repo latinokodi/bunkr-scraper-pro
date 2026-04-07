@@ -1,0 +1,9 @@
+requests
+beautifulsoup4
+pywebview
+tqdm
+hachoir
+httpx
+aiohttp
+pyinstaller
+Pillow
