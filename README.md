@@ -52,19 +52,6 @@ Este script se encargará de:
 5. Observa el progreso en tiempo real en el Dashboard.
 6. Utiliza el botón **STOP** para interrumpir descargas si es necesario.
 
-## 📦 Releases Automatizados
-
-Esta aplicación utiliza **GitHub Actions** para generar versiones `.exe` portables automáticamente.
-
-### Cómo Generar una Nueva Versión (Release)
-1. Asegúrate de que todos tus cambios estén pusheados a la rama `main`.
-2. Crea y sube una etiqueta (tag) de versión:
-   ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
-   ```
-3. GitHub Actions detectará la etiqueta, compilará el núcleo de Python, empaquetará la interfaz de Electron y creará un **GitHub Release** con el archivo `.exe` portable listo para descargar.
-
 ## 🛠️ Arquitectura Técnica
 
 - **Frontend**: HTML5, CSS3 (Vanilla + Glassmorphism), JavaScript (ES6).

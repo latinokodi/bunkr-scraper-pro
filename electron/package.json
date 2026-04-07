@@ -9,42 +9,9 @@
     "url": "https://github.com/latinokodi/bunkr-scraper-pro.git"
   },
   "scripts": {
-    "start": "electron .",
-    "dist": "electron-builder"
-  },
-  "build": {
-    "appId": "com.bunkr.scraper.pro",
-    "productName": "Bunkr Scraper PRO",
-    "win": {
-      "target": "portable",
-      "icon": "assets/icon.ico"
-    },
-    "portable": {
-      "artifactName": "${productName}_Portable_${version}.${ext}"
-    },
-    "directories": {
-      "output": "../dist"
-    },
-    "files": [
-      "main.js",
-      "preload.js",
-      "lib/**/*",
-      "assets/**/*",
-      "package.json",
-      "../gui/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "../bin",
-        "to": "bin",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ]
+    "start": "electron ."
   },
   "devDependencies": {
-    "electron": "^34.5.8",
-    "electron-builder": "^25.1.8"
+    "electron": "^34.5.8"
   }
 }
