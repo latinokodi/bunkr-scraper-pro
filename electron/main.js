@@ -146,7 +146,15 @@ function createWindow() {
         title: 'Bunkr Scraper PRO',
     });
 
-    mainWindow.loadFile(path.join(ROOT, 'gui', 'index.html'));
+    mainWindow.loadFile(path.join(__dirname, '..', 'gui', 'index.html'));
+
+    if (isPackaged) {
+        // Fallback for packaged app if the above fails
+        const packagedPath = path.join(__dirname, 'gui', 'index.html');
+        if (fs.existsSync(packagedPath)) {
+            mainWindow.loadFile(packagedPath);
+        }
+    }
 
     mainWindow.once('ready-to-show', () => {
         mainWindow.maximize();
