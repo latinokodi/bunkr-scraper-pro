@@ -4,6 +4,10 @@
   "description": "Download media from Bunkr albums with Neon UI",
   "main": "main.js",
   "author": "Antigravity",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/latinokodi/bunkr-scraper-pro.git"
+  },
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder"
