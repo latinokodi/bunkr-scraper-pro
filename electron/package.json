@@ -1,0 +1,46 @@
+{
+  "name": "bunkr-scraper-pro",
+  "version": "1.0.0",
+  "description": "Download media from Bunkr albums with Neon UI",
+  "main": "main.js",
+  "author": "Antigravity",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.bunkr.scraper.pro",
+    "productName": "Bunkr Scraper PRO",
+    "win": {
+      "target": "portable",
+      "icon": "assets/icon.ico"
+    },
+    "portable": {
+      "artifactName": "${productName}_Portable_${version}.${ext}"
+    },
+    "directories": {
+      "output": "../dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "assets/**/*",
+      "package.json",
+      "../gui/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../bin",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^34.5.8",
+    "electron-builder": "^25.1.8"
+  }
+}
