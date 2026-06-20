@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE and editor
+.vscode/
+.idea/
+
+# Hermes Agent
+.agent/
+.antigravitycli/
+
+# Lint cache
+.ruff_cache/
+
+# User data and settings (local)
+bunkr_settings.json
+bunkr_history.json
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+nul
